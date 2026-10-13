@@ -1,0 +1,71 @@
+{
+  "asset": {
+    "version": "1.1"
+  },
+  "geometricError": 10000,
+  "root": {
+    "boundingVolume": {
+      "box": [
+        5,
+        -5,
+        0,
+        10,
+        0,
+        0,
+        0,
+        10,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "transform": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      6378137,
+      0,
+      0,
+      1
+    ],
+    "geometricError": 10000,
+    "refine": "ADD",
+    "content": {
+      "uri": "triangle.gltf"
+    },
+    "children": [
+      {
+        "boundingVolume": {
+          "box": [
+            5,
+            -5,
+            0,
+            10,
+            0,
+            0,
+            0,
+            10,
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "geometricError": 0,
+        "content": {
+          "uri": "missing-content.gltf"
+        }
+      }
+    ]
+  }
+}

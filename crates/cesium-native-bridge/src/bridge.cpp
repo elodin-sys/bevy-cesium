@@ -22,6 +22,13 @@ namespace cesium_bridge {
 namespace {
 using namespace Cesium3DTilesSelection;
 
+void registerContentTypes() {
+  // Native's process-wide converter registry must not be mutated while another
+  // session is decoding a tile, including sessions owned by different threads.
+  static std::once_flag registered;
+  std::call_once(registered, Cesium3DTilesContent::registerAllTileContentTypes);
+}
+
 // Bounded worker count; destruction drains work and joins every worker.
 class Workers final : public CesiumAsync::ITaskProcessor {
   std::mutex mutex;
@@ -203,6 +210,7 @@ struct Session::Impl {
   TilesetOptions options() {
     TilesetOptions options;
     auto failed = loadFailed;
+    // Native 0.65 calls this for root/ion failures, not failed child tiles.
     options.loadErrorCallback = [failed](const auto&) { failed->store(true); };
     return options;
   }
@@ -210,6 +218,12 @@ struct Session::Impl {
     // Native errors may contain signed asset URLs. Never forward those to logs.
     auto logger = std::make_shared<spdlog::logger>("cesium", std::make_shared<spdlog::sinks::null_sink_mt>());
     return {accessor, resources, async, credits, logger};
+  }
+  void observeRootFailure() {
+    auto failed = loadFailed;
+    // Transport exceptions reject the root future without calling loadErrorCallback.
+    tileset->getRootTileAvailableEvent().catchInMainThread(
+        [failed](std::exception&&) { failed->store(true); });
   }
   ~Impl() {
     if (!tileset) return;
@@ -222,12 +236,14 @@ struct Session::Impl {
   }
 };
 Session::Session(rust::Str url) : impl(std::make_unique<Impl>()) {
-  Cesium3DTilesContent::registerAllTileContentTypes();
+  registerContentTypes();
   impl->tileset = std::make_unique<Tileset>(impl->externals(), std::string(url), impl->options());
+  impl->observeRootFailure();
 }
 Session::Session(int64_t asset, rust::Str token) : impl(std::make_unique<Impl>()) {
-  Cesium3DTilesContent::registerAllTileContentTypes();
+  registerContentTypes();
   impl->tileset = std::make_unique<Tileset>(impl->externals(), asset, std::string(token), impl->options());
+  impl->observeRootFailure();
 }
 Session::~Session() = default;
 std::unique_ptr<Session> open_url(rust::Str url) { return std::make_unique<Session>(url); }
