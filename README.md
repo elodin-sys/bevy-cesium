@@ -1,4 +1,4 @@
-# Cesium for Bevy — experimental
+# Cesium for Bevy
 
 A reusable Bevy 0.19 plugin backed by Cesium Native 0.65.0. Maintained by Elodin as a reusable library, independently of the Editor; it is not an official Cesium integration.
 
@@ -31,16 +31,3 @@ Applications with their own floating-origin system use `.with_external_coordinat
 
 The host must display `CesiumCredits` in accordance with its data provider's requirements, including applicable links and logos. The minimal demo displays returned HTML as text and is only an attribution example for the public sample; it is not a general HTML attribution renderer. `CesiumStatus` exposes pending loads, failures and tile counts without logging signed URLs.
 
-## Current limits
-
-Textured triangle meshes support base-color textures (including the selected UV set), metallic/roughness factors, emissive factors, opaque/blended/masked alpha and double-sided surfaces. Additional PBR texture maps and material extensions are not implemented. Raster imagery overlays, full glTF materials, picking, collisions and a continuous surface-to-globe experience are not implemented. The Falcon video used Elodin's own Earth renderer and a video dissolve; it is not evidence of a Cesium globe transition. No multi-platform release or API stability is claimed yet.
-
-The C++ dependency and narrow Rust `unsafe extern` declarations remain confined to the bridge. The Bevy plugin forbids unsafe Rust. Memory and threading safety still depend on the native implementation; extraction does not remove that responsibility.
-
-Licensed under Apache-2.0. Initial code extracted from Elodin's experimental Cesium integration; Cesium Native and its dependencies retain their own licenses.
-
-## Local validation (2026-10-13)
-
-On Apple Silicon macOS: standalone release viewer displays the public AGI sample; eleven tests pass (ECEF precision/rebasing, headless Bevy loading, native textured fixture, material modes/factors, nonzero UV sets, environment configuration and input/error handling); `cargo fmt` and Clippy with `-D warnings` pass. The Elodin consumer builds with `just install editor` and renders the same sample in its multiple viewports. The standalone Nix development shell starts successfully. These checks do not certify Windows/Linux, ion credentials, or raster overlays.
-
-The [ECEF end-to-end test](tests/ecef_end_to_end.rs) drives two real Bevy camera components through Cesium Native selection and Bevy mesh placement, rebases the origin by several kilometers and back, checks geometry within 1 mm in ECEF, and disables one viewport without duplicating the loaded mesh. It runs headless on a local georeferenced fixture. GPU pixel output, globe-scale terrain and network/ion behavior are outside this automated test.
