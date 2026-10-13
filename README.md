@@ -31,3 +31,10 @@ Applications with their own floating-origin system use `.with_external_coordinat
 
 The host must display `CesiumCredits` in accordance with its data provider's requirements, including applicable links and logos. The minimal demo displays returned HTML as text and is only an attribution example for the public sample; it is not a general HTML attribution renderer. `CesiumStatus` exposes pending loads, failures and tile counts without logging signed URLs.
 
+## Usage examples
+
+### Integration into Elodin Editor
+
+https://github.com/user-attachments/assets/8cc6c6b6-20e7-4b96-a51c-ef1f1659bdb0
+
+
