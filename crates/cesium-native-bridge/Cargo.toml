@@ -1,0 +1,12 @@
+[package]
+name = "cesium-native-bridge"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Owned-data Rust interface to Cesium Native"
+
+[dependencies]
+cxx = "1"
+
+[build-dependencies]
+cxx-build = "1"

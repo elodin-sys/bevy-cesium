@@ -1,0 +1,23 @@
+[workspace]
+members = ["crates/cesium-native-bridge"]
+resolver = "3"
+
+[package]
+name = "bevy-cesium"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Cesium Native streaming for Bevy"
+
+[dependencies]
+cesium-native-bridge = { path = "crates/cesium-native-bridge", version = "0.1.0" }
+bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "bevy_asset", "bevy_color", "bevy_camera", "bevy_image", "bevy_mesh", "bevy_render", "bevy_pbr", "bevy_log"] }
+
+[dev-dependencies]
+bevy = { version = "0.19.0", default-features = false, features = ["multi_threaded", "bevy_winit", "bevy_core_pipeline", "bevy_light", "bevy_shader", "bevy_window", "bevy_text", "bevy_ui", "bevy_ui_render", "default_font", "tonemapping_luts", "zstd_rust", "x11", "wayland", "png"] }
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+debug = 0
