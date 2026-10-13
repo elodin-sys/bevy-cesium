@@ -95,6 +95,13 @@ in
       # Never let vcpkg acquire unpinned sources or tools during the build.
       substituteInPlace cmake/ezvcpkg/ezvcpkg.cmake \
         --replace-fail "install --triplet" "install --no-downloads --triplet"
+      # vcpkg extracts KTX during configure, after Nix's shebang patching.
+      # Linux sandboxes have no /usr/bin/env for its version generator.
+      substituteInPlace extern/vcpkg/ports/ktx/portfile.cmake \
+        --replace-fail 'vcpkg_cmake_configure(' 'file(READ "''${SOURCE_PATH}/scripts/mkversion" KTX_MKVERSION)
+      string(REPLACE "/usr/bin/env bash" "${stdenv.shell}" KTX_MKVERSION "''${KTX_MKVERSION}")
+      file(WRITE "''${SOURCE_PATH}/scripts/mkversion" "''${KTX_MKVERSION}")
+      vcpkg_cmake_configure('
       # Draco's upstream Clang test assumes ELF unless Darwin is excluded.
       substituteInPlace "$VCPKG_ROOT/ports/draco/portfile.cmake" \
         --replace-fail 'vcpkg_cmake_configure(' 'file(READ "''${SOURCE_PATH}/cmake/draco_targets.cmake" DRACO_TARGETS)
@@ -112,7 +119,7 @@ in
       if [ -d "''${VCPKG_ROOT:-}/buildtrees" ]; then
         echo "Native dependency error excerpts:"
         find "$VCPKG_ROOT/buildtrees" -name 'install-*-out.log' -type f \
-          -exec grep -h -E 'fatal error:|error:|command not found|Killed' {} + \
+          -exec grep -h -E 'fatal error:|error:|bad interpreter:|command not found|Killed' {} + \
           | tail -n 15 || true
       fi
     '';
