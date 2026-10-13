@@ -1,0 +1,167 @@
+[
+  {
+    "name": "Amanieu-asyncplusplus-v1.2.tar.gz",
+    "url": "https://github.com/Amanieu/asyncplusplus/archive/v1.2.tar.gz",
+    "hash": "sha256-BxHI2yMb8+sQZkAPSe1ztcMhGhDrO4w+ZNo9X97opL8="
+  },
+  {
+    "name": "CesiumGS-KTX-Software-v4.4.2-plus-vcpkg-patches-2.tar.gz",
+    "url": "https://github.com/CesiumGS/KTX-Software/archive/v4.4.2-plus-vcpkg-patches-2.tar.gz",
+    "hash": "sha512-mYaqkRtb1S1aq+RlV4oL05BvsHuEa6zj69DHK9PQIacavTB8MIlnSDPcaV6H7EzRNu5niBo4k5vF9C1zElMjSw=="
+  },
+  {
+    "name": "Forceflow-libmorton-v0.2.12.tar.gz",
+    "url": "https://github.com/Forceflow/libmorton/archive/v0.2.12.tar.gz",
+    "hash": "sha256-SOw+StHZNIBS3LZL/wEv+V2yJto/7FUirm5nT6u9aG8="
+  },
+  {
+    "name": "KhronosGroup-EGL-Registry-3ae2b7c48690d2ce13cc6db3db02dfc0572be65e.tar.gz",
+    "url": "https://github.com/KhronosGroup/EGL-Registry/archive/3ae2b7c48690d2ce13cc6db3db02dfc0572be65e.tar.gz",
+    "hash": "sha256-APbVZW2KB17nLsLMvpuAPSm7VmlbBWIqxM3pXXYKFSg="
+  },
+  {
+    "name": "KhronosGroup-OpenGL-Registry-0b449b97cdf1043eef5e1f0e235cbbab6ec10c86.tar.gz",
+    "url": "https://github.com/KhronosGroup/OpenGL-Registry/archive/0b449b97cdf1043eef5e1f0e235cbbab6ec10c86.tar.gz",
+    "hash": "sha256-NTVqMagbxL//teK1yHLDPFipuqPqZ1NHpQzr/6bs904="
+  },
+  {
+    "name": "Tencent-rapidjson-24b5e7a8b27f42fa16b96fc70aade9106cf7102f-2.tar.gz",
+    "url": "https://github.com/Tencent/rapidjson/archive/24b5e7a8b27f42fa16b96fc70aade9106cf7102f.tar.gz",
+    "hash": "sha256-LSYBqC0tO34UOjyNQ+9hZnE5EDS8RokamBa3nPLT56g="
+  },
+  {
+    "name": "abseil-abseil-cpp-20260107.1.tar.gz",
+    "url": "https://github.com/abseil/abseil-cpp/archive/20260107.1.tar.gz",
+    "hash": "sha256-QxTip8usicrCWi8jIocPND2BV5dWzv9/QxgDwskJAZU="
+  },
+  {
+    "name": "ada-url-ada-v3.4.4.tar.gz",
+    "url": "https://github.com/ada-url/ada/archive/v3.4.4.tar.gz",
+    "hash": "sha256-d7xbvDg+0JjMYCZq1u6RLeJDG7YtiSSMDhfE5xLc2vk="
+  },
+  {
+    "name": "asmjit-asmjit-9eb6edbf711ceb25346ee40bae68b40a4505cdf5.tar.gz",
+    "url": "https://github.com/asmjit/asmjit/archive/9eb6edbf711ceb25346ee40bae68b40a4505cdf5.tar.gz",
+    "hash": "sha256-6QPV+3mZ3ew8scbN6UVCdNwK6ccg52Hz3n9G9vVSbmE="
+  },
+  {
+    "name": "blend2d-blend2d-d2027ebfd6aaf53b190b6b3b497425fc85f14251.tar.gz",
+    "url": "https://github.com/blend2d/blend2d/archive/d2027ebfd6aaf53b190b6b3b497425fc85f14251.tar.gz",
+    "hash": "sha256-cNjYAbEkkdEZ7ShflcTuDRtt/03UG7hG2fsejc2EEsk="
+  },
+  {
+    "name": "client9-stringencoders-e1448a9415f4ebf6f559c86718193ba067cbb99d.tar.gz",
+    "url": "https://github.com/client9/stringencoders/archive/e1448a9415f4ebf6f559c86718193ba067cbb99d.tar.gz",
+    "hash": "sha256-jCb4lnLGpTQ7qO1YIAIH5nUwvFoxgTBEIGkgQGixWFw="
+  },
+  {
+    "name": "curl-curl-curl-8_19_0.tar.gz",
+    "url": "https://github.com/curl/curl/archive/curl-8_19_0.tar.gz",
+    "hash": "sha256-M0I5D3dL2nUjRkoTxTUxKWKiewJuegXsjasCeoSAMn4="
+  },
+  {
+    "name": "doctest-doctest-v2.5.2.tar.gz",
+    "url": "https://github.com/doctest/doctest/archive/v2.5.2.tar.gz",
+    "hash": "sha256-kYmWDCu7xPM4LOB3Oyu18T46/Y/tR/VfGT4R6FpPmFQ="
+  },
+  {
+    "name": "facebook-zstd-v1.5.7.tar.gz",
+    "url": "https://github.com/facebook/zstd/archive/v1.5.7.tar.gz",
+    "hash": "sha256-N9coRVayCVTlbhyoW4AiZ2iQLi7avTtknp5ywMkBLuM="
+  },
+  {
+    "name": "fmtlib-fmt-12.1.0.tar.gz",
+    "url": "https://github.com/fmtlib/fmt/archive/12.1.0.tar.gz",
+    "hash": "sha256-6n3kKZaJ4Stt3dOS+YlvCPsHd6xxaIl6JEptYIUEP+o="
+  },
+  {
+    "name": "g-truc-glm-1.0.3.tar.gz",
+    "url": "https://github.com/g-truc/glm/archive/1.0.3.tar.gz",
+    "hash": "sha256-Z3XkcjGkRv0IbWYOzBi80HZTHP7dkS+9ZuV2sRhgcAE="
+  },
+  {
+    "name": "gabime-spdlog-v1.17.0.tar.gz",
+    "url": "https://github.com/gabime/spdlog/archive/v1.17.0.tar.gz",
+    "hash": "sha256-2IYpVcbXTlhGs/WAsWBdJCixHZekENhuL7E+hXzTp0Q="
+  },
+  {
+    "name": "google-draco-1.5.7.tar.gz",
+    "url": "https://github.com/google/draco/archive/1.5.7.tar.gz",
+    "hash": "sha256-v2sQW3kiPqsrhnlTY9/l5TVgUABqllIUd5c6uo8Db+E="
+  },
+  {
+    "name": "google-s2geometry-v0.13.1.tar.gz",
+    "url": "https://github.com/google/s2geometry/archive/v0.13.1.tar.gz",
+    "hash": "sha256-3wAfg1Lc4IOoe3Rka8vGX7vNA5ZGvaW2St/aHi6jLUc="
+  },
+  {
+    "name": "leethomason-tinyxml2-11.0.0.tar.gz",
+    "url": "https://github.com/leethomason/tinyxml2/archive/11.0.0.tar.gz",
+    "hash": "sha256-VVbetQgfskbukq+uc+/ZQ8iJzvDK/qkrC4JCLWoY8ok="
+  },
+  {
+    "name": "libjpeg-turbo-libjpeg-turbo-3.1.4.1.tar.gz",
+    "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/3.1.4.1.tar.gz",
+    "hash": "sha256-p9pCtkA3fCqalmXixLDqYM1Vma+0jCUh5t8MncnRWiU="
+  },
+  {
+    "name": "madler-zlib-v1.3.2.tar.gz",
+    "url": "https://github.com/madler/zlib/archive/v1.3.2.tar.gz",
+    "hash": "sha256-uZoLhsC6k2DsfnjE8eQ7HL3x5pNsj6D2g1wM1pSklaE="
+  },
+  {
+    "name": "mapbox-earcut.hpp-v2.2.4.tar.gz",
+    "url": "https://github.com/mapbox/earcut.hpp/archive/v2.2.4.tar.gz",
+    "hash": "sha256-/PpqR6UtTJTclgvbdH8X4HdgkjVRewu1zoCX1rdHaVo="
+  },
+  {
+    "name": "martinmoene-expected-lite-v0.10.0.tar.gz",
+    "url": "https://github.com/martinmoene/expected-lite/archive/v0.10.0.tar.gz",
+    "hash": "sha256-z+CC5P/t7u2sR3Y1BBAmRqOcCAWZx8H+mSmdah+Zr5I="
+  },
+  {
+    "name": "nianticlabs-spz-v2.1.0.tar.gz",
+    "url": "https://github.com/nianticlabs/spz/archive/v2.1.0.tar.gz",
+    "hash": "sha256-l79EUbdsf8Qot8PtQm7bxxwSLmsLQ2I83876voUHCeQ="
+  },
+  {
+    "name": "nothings-stb-f75e8d1cad7d90d72ef7a4661f1b994ef78b4e31.tar.gz",
+    "url": "https://github.com/nothings/stb/archive/f75e8d1cad7d90d72ef7a4661f1b994ef78b4e31.tar.gz",
+    "hash": "sha256-vGzPCL7Aj+qO9CPHEX3KBtL2LSsnxUhfaGVYS1M/p/o="
+  },
+  {
+    "name": "okdshin-PicoSHA2-v1.0.1.tar.gz",
+    "url": "https://github.com/okdshin/PicoSHA2/archive/v1.0.1.tar.gz",
+    "hash": "sha256-mYMTZUQjTlc/4HzBoi/fl4rXl5BD574ukIL21Jkf+Kg="
+  },
+  {
+    "name": "openssl-openssl-openssl-3.6.2.tar.gz",
+    "url": "https://github.com/openssl/openssl/archive/openssl-3.6.2.tar.gz",
+    "hash": "sha256-vH3ICdGELkqcGQdl2D+2qICEx1yLBLTDwwSpKdM6UQg="
+  },
+  {
+    "name": "sqlite-autoconf-3530000.tar.gz",
+    "url": "https://sqlite.org/2026/sqlite-autoconf-3530000.tar.gz",
+    "hash": "sha256-hR6bOBkv4s6qZeC6pmXn+gYjDD2b0aapZi0COA1zNlo="
+  },
+  {
+    "name": "webmproject-libwebp-v1.6.0.tar.gz",
+    "url": "https://github.com/webmproject/libwebp/archive/v1.6.0.tar.gz",
+    "hash": "sha256-k6hSwrPvr+43I+/UY23oVbRvn+Hv3dYH4fQvYPyPITY="
+  },
+  {
+    "name": "yhirose-cpp-httplib-v0.43.1.tar.gz",
+    "url": "https://github.com/yhirose/cpp-httplib/archive/v0.43.1.tar.gz",
+    "hash": "sha256-AAgypbULZ7gqd4RcCdgy9uSSARzQ7x1PcvgI62pPvrM="
+  },
+  {
+    "name": "zeux-meshoptimizer-v1.1.tar.gz",
+    "url": "https://github.com/zeux/meshoptimizer/archive/v1.1.tar.gz",
+    "hash": "sha256-t4cBH4G0swacL5Blt8GR791BiaSb4yulKC3VV58FJho="
+  },
+  {
+    "name": "zlib-ng-zlib-ng-2.3.3.tar.gz",
+    "url": "https://github.com/zlib-ng/zlib-ng/archive/2.3.3.tar.gz",
+    "hash": "sha256-+cZaqchS64JVtjb9nwfOHEBvBh7Bmi59UIsxjKDJB9E="
+  }
+]
