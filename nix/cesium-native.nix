@@ -17,6 +17,7 @@
   perl,
   nasm,
   python3,
+  getopt,
 }: let
   nativeRev = "1bca8021711294cc83a5a032599ac72d9b3166c9";
   vcpkgRev = "56bb2411609227288b70117ead2c47585ba07713";
@@ -56,6 +57,7 @@ in
       perl
       nasm
       python3
+      getopt
     ];
     enableParallelBuilding = true;
     VCPKG_FORCE_SYSTEM_BINARIES = "1";
@@ -80,6 +82,10 @@ in
         '')
         downloads}
       patchShebangs "$VCPKG_ROOT/scripts"
+      # The SDK is installed and linked in Release; avoid duplicate Debug builds.
+      for triplet in "$VCPKG_ROOT"/triplets/*.cmake; do
+        printf '\nset(VCPKG_BUILD_TYPE release)\n' >> "$triplet"
+      done
       # Never let vcpkg acquire unpinned sources or tools during the build.
       substituteInPlace cmake/ezvcpkg/ezvcpkg.cmake \
         --replace-fail "install --triplet" "install --no-downloads --triplet"
