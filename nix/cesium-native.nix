@@ -18,6 +18,7 @@
   nasm,
   python3,
   getopt,
+  darwin,
 }: let
   nativeRev = "1bca8021711294cc83a5a032599ac72d9b3166c9";
   vcpkgRev = "56bb2411609227288b70117ead2c47585ba07713";
@@ -42,30 +43,35 @@ in
     pname = "cesium-native";
     version = "0.65.0";
     src = nativeSource;
-    nativeBuildInputs = [
-      cmake
-      ninja
-      pkg-config
-      git
-      vcpkg-tool
-      curl
-      zip
-      unzip
-      autoconf
-      automake
-      libtool
-      perl
-      nasm
-      python3
-      getopt
-    ];
+    nativeBuildInputs =
+      [
+        cmake
+        ninja
+        pkg-config
+        git
+        vcpkg-tool
+        curl
+        zip
+        unzip
+        autoconf
+        automake
+        perl
+        nasm
+        python3
+        getopt
+      ]
+      ++ lib.optionals stdenv.isLinux [libtool]
+      ++ lib.optionals stdenv.isDarwin [darwin.cctools];
     enableParallelBuilding = true;
     VCPKG_FORCE_SYSTEM_BINARIES = "1";
     VCPKG_DISABLE_METRICS = "1";
     VCPKG_BINARY_SOURCES = "clear";
     preConfigure = ''
       export HOME="$TMPDIR/home"
-      export VCPKG_MAX_CONCURRENCY="$NIX_BUILD_CORES"
+      # CI hosts run other builds concurrently; keep compiler memory bounded.
+      nativeJobs="''${NIX_BUILD_CORES:-4}"
+      if [ "$nativeJobs" -lt 1 ] || [ "$nativeJobs" -gt 4 ]; then nativeJobs=4; fi
+      export VCPKG_MAX_CONCURRENCY="$nativeJobs"
       mkdir -p "$HOME" "$TMPDIR/vcpkg"
       export EZVCPKG_BASEDIR="$TMPDIR/vcpkg"
       cp -R ${vcpkgSource} "$EZVCPKG_BASEDIR/${vcpkgRev}"
@@ -101,6 +107,15 @@ in
       "-DCESIUM_ENABLE_CLANG_TIDY=OFF"
       "-DEZVCPKG_HOST_VCPKG=${vcpkg-tool}/bin/vcpkg"
     ];
+    failureHook = ''
+      # Nix otherwise prints only the end of a long parallel compiler log.
+      if [ -d "''${VCPKG_ROOT:-}/buildtrees" ]; then
+        echo "Native dependency error excerpts:"
+        find "$VCPKG_ROOT/buildtrees" -name 'install-*-out.log' -type f \
+          -exec grep -h -E 'fatal error:|error:|command not found|Killed' {} + \
+          | tail -n 15 || true
+      fi
+    '';
     postInstall = ''
       printf '%s\n' '${nativeRev}' > "$out/.cesium-native-revision"
     '';
