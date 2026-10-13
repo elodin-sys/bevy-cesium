@@ -49,6 +49,12 @@ fn standalone_bevy_streams_a_fixture_without_elodin_or_gpu() {
                 .resource::<Assets<StandardMaterial>>()
                 .get(&material.0)
                 .unwrap();
+            assert_eq!(mat.metallic, 0.25);
+            assert_eq!(mat.perceptual_roughness, 0.6);
+            assert_eq!(mat.alpha_mode, AlphaMode::Mask(0.35));
+            assert_eq!(mat.emissive, LinearRgba::rgb(0.1, 0.2, 0.3));
+            assert!(mat.double_sided);
+            assert!(mat.cull_mode.is_none());
             assert!(
                 world
                     .resource::<Assets<Image>>()

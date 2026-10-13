@@ -80,6 +80,12 @@ mod ffi {
         width: u32,
         height: u32,
         double_sided: bool,
+        metallic: f32,
+        roughness: f32,
+        emissive: [f32; 3],
+        // glTF OPAQUE=0, MASK=1, BLEND=2.
+        alpha_mode: u8,
+        alpha_cutoff: f32,
     }
 
     struct Tile {

@@ -28,6 +28,12 @@ fn streams_a_local_georeferenced_gltf_without_a_token() {
             assert_eq!(primitive.normals.len(), 9);
             assert_eq!(primitive.indices, [0, 1, 2]);
             assert!((primitive.transform[12] - 6_378_137.0).abs() < 1e-6);
+            assert_eq!(primitive.metallic, 0.25);
+            assert_eq!(primitive.roughness, 0.6);
+            assert_eq!(primitive.alpha_mode, 1);
+            assert_eq!(primitive.alpha_cutoff, 0.35);
+            assert_eq!(primitive.emissive, [0.1, 0.2, 0.3]);
+            assert!(primitive.double_sided);
             assert_eq!(primitive.base_color, [0.2, 0.5, 0.9, 1.0]);
             assert_eq!((primitive.width, primitive.height), (1, 1));
             assert_eq!(primitive.pixels, [240, 80, 20, 255]);

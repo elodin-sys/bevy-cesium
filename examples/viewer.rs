@@ -7,18 +7,13 @@ use bevy::{
 use bevy_cesium::*;
 
 fn main() {
-    let source = if let Ok(asset) = std::env::var("CESIUM_ION_ASSET_ID") {
-        CesiumSource::Ion {
-            asset_id: asset
-                .parse()
-                .expect("CESIUM_ION_ASSET_ID must be an integer"),
-            access_token: std::env::var("CESIUM_ION_TOKEN").expect("Set CESIUM_ION_TOKEN"),
-        }
-    } else {
-        CesiumSource::Url(std::env::var("CESIUM_TILESET_URL").unwrap_or_else(|_| {
-            "https://pelican-public.s3.amazonaws.com/3dtiles/agi-hq/tileset.json".into()
-        }))
-    };
+    let source = CesiumSource::from_env()
+        .expect("Invalid Cesium configuration")
+        .unwrap_or_else(|| {
+            CesiumSource::Url(
+                "https://pelican-public.s3.amazonaws.com/3dtiles/agi-hq/tileset.json".into(),
+            )
+        });
     let lat = number("CESIUM_LAT", 40.03879587543084).to_radians();
     let lon = number("CESIUM_LON", -75.59670696255716).to_radians();
     let alt = number("CESIUM_ALT", 297.25783960334957);

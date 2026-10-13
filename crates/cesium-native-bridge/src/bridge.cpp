@@ -66,13 +66,20 @@ Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
     if (primitive.mode != 4) return; // First prototype: triangle surfaces.
     const auto positions = CesiumGltf::getPositionAccessorView(gltf, primitive);
     const auto normals = CesiumGltf::getNormalAccessorView(gltf, primitive);
-    const auto uvs = CesiumGltf::getTexCoordAccessorView(gltf, primitive, 0);
+    int32_t texCoord = 0;
+    if (primitive.material >= 0 && size_t(primitive.material) < gltf.materials.size()) {
+      const auto& material = gltf.materials[primitive.material];
+      if (material.pbrMetallicRoughness && material.pbrMetallicRoughness->baseColorTexture)
+        texCoord = material.pbrMetallicRoughness->baseColorTexture->texCoord;
+    }
+    const auto uvs = CesiumGltf::getTexCoordAccessorView(gltf, primitive, texCoord);
     const auto count = std::visit(CesiumGltf::CountFromAccessor{}, positions);
     if (count <= 0) return;
     Primitive p{};
     auto matrix = root * node;
     std::copy_n(glm::value_ptr(matrix), 16, p.transform.begin());
     p.base_color = {1.f, 1.f, 1.f, 1.f};
+    p.metallic = 1.f; p.roughness = 1.f; p.alpha_cutoff = 0.5f;
     for (int64_t i = 0; i < count; ++i) {
       const auto position = std::visit(CesiumGltf::PositionFromAccessor{i}, positions);
       if (!position) return;
@@ -100,8 +107,14 @@ Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
     if (primitive.material >= 0 && size_t(primitive.material) < gltf.materials.size()) {
       const auto& material = gltf.materials[primitive.material];
       p.double_sided = material.doubleSided;
+      p.alpha_mode = material.alphaMode == "MASK" ? 1 : material.alphaMode == "BLEND" ? 2 : 0;
+      p.alpha_cutoff = float(material.alphaCutoff);
+      if (material.emissiveFactor.size() == 3)
+        for (int i = 0; i < 3; ++i) p.emissive[i] = float(material.emissiveFactor[i]);
       if (material.pbrMetallicRoughness) {
         const auto& pbr = *material.pbrMetallicRoughness;
+        p.metallic = float(pbr.metallicFactor);
+        p.roughness = float(pbr.roughnessFactor);
         if (pbr.baseColorFactor.size() == 4)
           for (int i = 0; i < 4; ++i) p.base_color[i] = float(pbr.baseColorFactor[i]);
         if (pbr.baseColorTexture && pbr.baseColorTexture->index >= 0 &&

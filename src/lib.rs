@@ -13,11 +13,8 @@ use bevy::{
 pub use cesium_native_bridge::View as CesiumView;
 use std::collections::{HashMap, HashSet};
 
-/// Source credentials are intentionally not Debug or Reflect.
-pub enum CesiumSource {
-    Url(String),
-    Ion { asset_id: i64, access_token: String },
-}
+mod source;
+pub use source::{CesiumConfigError, CesiumSource};
 
 /// Mark ordinary Bevy cameras that should contribute to tile selection.
 #[derive(Component)]
@@ -253,7 +250,14 @@ fn stream(
                 } else {
                     Some(bevy::render::render_resource::Face::Back)
                 },
-                perceptual_roughness: 1.0,
+                metallic: p.metallic,
+                perceptual_roughness: p.roughness,
+                emissive: LinearRgba::rgb(p.emissive[0], p.emissive[1], p.emissive[2]),
+                alpha_mode: match p.alpha_mode {
+                    1 => AlphaMode::Mask(p.alpha_cutoff),
+                    2 => AlphaMode::Blend,
+                    _ => AlphaMode::Opaque,
+                },
                 ..default()
             };
             let entity = commands
