@@ -112,6 +112,16 @@ in
       vcpkg_cmake_configure('
     '';
     cmakeFlags = [
+      # Upstream recognizes arm64 but Nix reports aarch64 on Linux.
+      "-DVCPKG_TARGET_TRIPLET=${
+        if stdenv.hostPlatform.isAarch64
+        then "arm64"
+        else "x64"
+      }-${
+        if stdenv.isDarwin
+        then "osx"
+        else "linux"
+      }"
       "-DCESIUM_TESTS_ENABLED=OFF"
       "-DCESIUM_ENABLE_CLANG_TIDY=OFF"
       "-DEZVCPKG_HOST_VCPKG=${vcpkg-tool}/bin/vcpkg"
