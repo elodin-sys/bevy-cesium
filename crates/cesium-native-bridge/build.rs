@@ -7,12 +7,22 @@ fn main() {
                 .is_file(),
             "Build Cesium Native with scripts/build_cesium_native.sh in bevy-cesium, or set CESIUM_NATIVE_DIR to an existing 0.65 installation."
         );
-        cxx_build::bridge("src/lib.rs")
+        let mut bridge = cxx_build::bridge("src/lib.rs");
+        bridge
             .file("src/bridge.cpp")
             .include("include")
             .include(root.join("include"))
-            .std("c++20")
-            .compile("cesium-bridge");
+            .std("c++20");
+        if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            bridge
+                .flag("/utf-8")
+                // Native headers need C++20, but async++ 1.2 still uses result_of.
+                .define("_HAS_DEPRECATED_RESULT_OF", "1")
+                // async++ includes Windows headers; exclude GDI's OPAQUE macro.
+                .define("WIN32_LEAN_AND_MEAN", None)
+                .define("NOMINMAX", None);
+        }
+        bridge.compile("cesium-bridge");
         println!("cargo:rerun-if-changed=src");
         println!("cargo:rerun-if-changed=include");
         println!(

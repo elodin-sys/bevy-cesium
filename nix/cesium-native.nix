@@ -87,7 +87,9 @@ in
           cp ${source.path} "$VCPKG_ROOT/downloads/${source.name}"
         '')
         downloads}
-      patchShebangs "$VCPKG_ROOT/scripts"
+      # Ports also contain executable templates copied into extracted sources
+      # (notably OpenSSL's configure wrapper).
+      patchShebangs "$VCPKG_ROOT/scripts" "$VCPKG_ROOT/ports"
       # The SDK is installed and linked in Release; avoid duplicate Debug builds.
       for triplet in "$VCPKG_ROOT"/triplets/*.cmake; do
         printf '\nset(VCPKG_BUILD_TYPE release)\n' >> "$triplet"
@@ -118,7 +120,7 @@ in
       # Nix otherwise prints only the end of a long parallel compiler log.
       if [ -d "''${VCPKG_ROOT:-}/buildtrees" ]; then
         echo "Native dependency error excerpts:"
-        find "$VCPKG_ROOT/buildtrees" -name 'install-*-out.log' -type f \
+        find "$VCPKG_ROOT/buildtrees" -name '*.log' -type f \
           -exec grep -h -E 'fatal error:|error:|bad interpreter:|command not found|Killed' {} + \
           | tail -n 15 || true
       fi
