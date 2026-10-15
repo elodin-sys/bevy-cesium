@@ -42,14 +42,17 @@ fn gltf_material_modes_reach_bevy_without_changing_defaults() {
                 match mat.alpha_mode {
                     AlphaMode::Opaque => {
                         modes[0] = true;
+                        assert!(mat.unlit);
                         assert!(!mat.double_sided);
                     }
                     AlphaMode::Blend => {
                         modes[1] = true;
+                        assert!(!mat.unlit);
                         assert_eq!(mat.base_color.alpha(), 0.4);
                     }
                     AlphaMode::Mask(cutoff) => {
                         modes[2] = true;
+                        assert!(!mat.unlit);
                         assert_eq!(cutoff, 0.3);
                         assert!(mat.double_sided);
                     }

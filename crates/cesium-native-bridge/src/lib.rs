@@ -80,6 +80,7 @@ mod ffi {
         width: u32,
         height: u32,
         double_sided: bool,
+        unlit: bool,
         metallic: f32,
         roughness: f32,
         emissive: [f32; 3],

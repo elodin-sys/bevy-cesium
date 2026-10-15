@@ -2,6 +2,38 @@ use cesium_native_bridge::{Session, View};
 use std::time::{Duration, Instant};
 
 #[test]
+fn unlit_material_crosses_the_bridge_without_changing_lit_materials() {
+    let url = format!(
+        "file://{}/tests/data/materials.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut session = Session::open_url(&url).unwrap();
+    let view = View {
+        position: [6_378_200.0, 5.0, -5.0],
+        direction: [-1.0, 0.0, 0.0],
+        up: [0.0, 0.0, 1.0],
+        width: 1280.0,
+        height: 720.0,
+        horizontal_fov: 1.4,
+        vertical_fov: 0.9,
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        let frame = session.update(&[view], 0.02).unwrap();
+        for tile in frame.loaded {
+            assert_eq!(tile.primitives.len(), 3);
+            assert_eq!(tile.primitives.iter().filter(|p| p.unlit).count(), 1);
+            for primitive in tile.primitives {
+                assert_eq!(primitive.unlit, primitive.alpha_mode == 0);
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("Cesium did not stream the material fixture");
+}
+
+#[test]
 fn streams_a_local_georeferenced_gltf_without_a_token() {
     let url = format!(
         "file://{}/tests/data/tileset.json",

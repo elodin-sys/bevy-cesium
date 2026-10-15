@@ -245,6 +245,7 @@ fn stream(
                 ),
                 base_color_texture: texture,
                 double_sided: p.double_sided,
+                unlit: p.unlit,
                 cull_mode: if p.double_sided {
                     None
                 } else {

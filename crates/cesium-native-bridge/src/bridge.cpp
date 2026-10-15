@@ -114,6 +114,7 @@ Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
     if (primitive.material >= 0 && size_t(primitive.material) < gltf.materials.size()) {
       const auto& material = gltf.materials[primitive.material];
       p.double_sided = material.doubleSided;
+      p.unlit = material.extensions.contains("KHR_materials_unlit");
       p.alpha_mode = material.alphaMode == "MASK" ? 1 : material.alphaMode == "BLEND" ? 2 : 0;
       p.alpha_cutoff = float(material.alphaCutoff);
       if (material.emissiveFactor.size() == 3)

@@ -43,7 +43,11 @@
     }
   ],
   "materials": [
-    {},
+    {
+      "extensions": {
+        "KHR_materials_unlit": {}
+      }
+    },
     {
       "alphaMode": "BLEND",
       "pbrMetallicRoughness": {
