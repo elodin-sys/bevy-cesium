@@ -2,7 +2,7 @@
 use bevy_tiles::{Backend, BackendError, Frame, Options, Primitive, Tile};
 pub use bevy_tiles::{
     CesiumCamera, CesiumConfigError, CesiumCredits, CesiumGeoreference, CesiumPrimitive, CesiumSet,
-    CesiumSource, CesiumStatus, CesiumView, CesiumViews,
+    CesiumSource, CesiumStatus, CesiumView, CesiumViews, GeographicImagery,
 };
 pub type CesiumPlugin = bevy_tiles::TilesPlugin<NativeBackend>;
 pub struct NativeBackend(cesium_native_bridge::Session);
@@ -10,6 +10,16 @@ impl Backend for NativeBackend {
     fn open(source: &bevy_tiles::CesiumSource, options: Options) -> Result<Self, BackendError> {
         let mut session = match source {
             bevy_tiles::CesiumSource::Url(url) => cesium_native_bridge::Session::open_url(url),
+            bevy_tiles::CesiumSource::Terrain { url, imagery: None } => {
+                cesium_native_bridge::Session::open_url(url)
+            }
+            bevy_tiles::CesiumSource::Terrain {
+                imagery: Some(_), ..
+            } => {
+                return Err(BackendError(
+                    "Raster overlays are not exposed by the Native bridge",
+                ));
+            }
             bevy_tiles::CesiumSource::Ion {
                 asset_id,
                 access_token,

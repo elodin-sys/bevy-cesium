@@ -1,7 +1,22 @@
 /// Source credentials are intentionally not Debug or Reflect.
 pub enum CesiumSource {
     Url(String),
-    Ion { asset_id: i64, access_token: String },
+    Ion {
+        asset_id: i64,
+        access_token: String,
+    },
+    /// EPSG:4326/TMS quantized-mesh terrain and an optional matching imagery grid.
+    Terrain {
+        url: String,
+        imagery: Option<GeographicImagery>,
+    },
+}
+
+/// URL template with `{z}`, `{x}`, `{y}` on the terrain's geographic TMS grid.
+/// Credentials may be present in URLs, so this type deliberately has no Debug.
+pub struct GeographicImagery {
+    pub url_template: String,
+    pub credit: String,
 }
 
 /// Invalid configuration. Values are never included: URLs and tokens may be secret.
@@ -18,6 +33,15 @@ impl CesiumSource {
     pub(crate) fn valid(&self) -> bool {
         match self {
             Self::Url(url) => !url.trim().is_empty(),
+            Self::Terrain { url, imagery } => {
+                !url.trim().is_empty()
+                    && imagery.as_ref().is_none_or(|i| {
+                        ["{z}", "{x}", "{y}"]
+                            .iter()
+                            .all(|v| i.url_template.contains(v))
+                            && !i.credit.trim().is_empty()
+                    })
+            }
             Self::Ion {
                 asset_id,
                 access_token,
@@ -88,6 +112,19 @@ impl CesiumSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn terrain_imagery_requires_grid_coordinates_and_credit() {
+        let source = |template: &str, credit: &str| CesiumSource::Terrain {
+            url: "https://example.com/layer.json".into(),
+            imagery: Some(GeographicImagery {
+                url_template: template.into(),
+                credit: credit.into(),
+            }),
+        };
+        assert!(source("https://example.com/{z}/{x}/{y}.png", "provider").valid());
+        assert!(!source("https://example.com/image.png", "provider").valid());
+        assert!(!source("https://example.com/{z}/{x}/{y}.png", "").valid());
+    }
     #[test]
     fn no_configuration_is_disabled_and_url_is_supported() {
         assert!(

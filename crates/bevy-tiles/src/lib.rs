@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 mod source;
-pub use source::{CesiumConfigError, CesiumSource};
+pub use source::{CesiumConfigError, CesiumSource, GeographicImagery};
 
 /// Mark ordinary Bevy cameras that should contribute to tile selection.
 #[derive(Component)]

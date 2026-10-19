@@ -50,9 +50,15 @@ Ion access is delegated to Cesium Native. Supply an asset ID and a scoped token
 through `CesiumSource::Ion` or the environment. Credential storage and UI belong
 to the host. A successful build is not validation of a live ion account or asset.
 
+The shared API also accepts `CesiumSource::Terrain` with optional
+`GeographicImagery`. The Native adapter currently rejects imagery overlays
+explicitly: the SDK supports overlays, but this bridge does not expose them.
+Terrain without an overlay is passed to Native; a full terrain/Google workflow
+has not been validated in this plugin. Caevy's supported subset is documented
+in that repository's validation checklist.
+
 ## Usage examples
 
 ### Integration into Elodin Editor
 
 https://github.com/user-attachments/assets/8cc6c6b6-20e7-4b96-a51c-ef1f1659bdb0
-
