@@ -25,6 +25,13 @@ impl Session {
         }
         ffi::open_ion(asset_id, token).map(Self).map_err(|_| Error)
     }
+    pub fn configure(&mut self, error: f64, cache_bytes: u64) -> Result<(), Error> {
+        if !error.is_finite() || error <= 0.0 || cache_bytes > i64::MAX as u64 {
+            return Err(Error);
+        }
+        self.0.pin_mut().configure(error, cache_bytes);
+        Ok(())
+    }
     pub fn update(&mut self, views: &[View], seconds: f32) -> Result<Frame, Error> {
         if !seconds.is_finite() || seconds < 0.0 || views.iter().any(|v| !valid_view(v)) {
             return Err(Error);
@@ -112,6 +119,7 @@ mod ffi {
         type Session;
         fn open_url(url: &str) -> Result<UniquePtr<Session>>;
         fn open_ion(asset_id: i64, token: &str) -> Result<UniquePtr<Session>>;
+        fn configure(self: Pin<&mut Session>, error: f64, cache_bytes: u64);
         fn update(self: Pin<&mut Session>, views: &[View], seconds: f32) -> Result<Frame>;
     }
 }

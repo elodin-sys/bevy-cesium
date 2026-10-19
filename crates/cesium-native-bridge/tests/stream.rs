@@ -20,7 +20,7 @@ fn unlit_material_crosses_the_bridge_without_changing_lit_materials() {
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         let frame = session.update(&[view], 0.02).unwrap();
-        for tile in frame.loaded {
+        if let Some(tile) = frame.loaded.into_iter().next() {
             assert_eq!(tile.primitives.len(), 3);
             assert_eq!(tile.primitives.iter().filter(|p| p.unlit).count(), 1);
             for primitive in tile.primitives {

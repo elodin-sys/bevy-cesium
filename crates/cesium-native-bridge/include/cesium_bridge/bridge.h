@@ -10,6 +10,7 @@ public:
   explicit Session(rust::Str url);
   Session(int64_t asset, rust::Str token);
   ~Session();
+  void configure(double error, uint64_t cacheBytes);
   Frame update(rust::Slice<const View> views, float seconds);
 private:
   struct Impl;

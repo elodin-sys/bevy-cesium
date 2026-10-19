@@ -247,6 +247,10 @@ Session::Session(int64_t asset, rust::Str token) : impl(std::make_unique<Impl>()
   impl->observeRootFailure();
 }
 Session::~Session() = default;
+void Session::configure(double error, uint64_t cacheBytes) {
+  impl->tileset->getOptions().maximumScreenSpaceError = error;
+  impl->tileset->getOptions().maximumCachedBytes = static_cast<int64_t>(cacheBytes);
+}
 std::unique_ptr<Session> open_url(rust::Str url) { return std::make_unique<Session>(url); }
 std::unique_ptr<Session> open_ion(int64_t asset, rust::Str token) { return std::make_unique<Session>(asset, token); }
 Frame Session::update(rust::Slice<const View> input, float seconds) {

@@ -347,7 +347,15 @@ name = "bevy-cesium"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy-tiles",
  "cesium-native-bridge",
+]
+
+[[package]]
+name = "bevy-tiles"
+version = "0.1.0"
+dependencies = [
+ "bevy",
 ]
 
 [[package]]

@@ -15,6 +15,19 @@ impl std::fmt::Display for CesiumConfigError {
 impl std::error::Error for CesiumConfigError {}
 
 impl CesiumSource {
+    pub(crate) fn valid(&self) -> bool {
+        match self {
+            Self::Url(url) => !url.trim().is_empty(),
+            Self::Ion {
+                asset_id,
+                access_token,
+            } => {
+                *asset_id > 0
+                    && !access_token.trim().is_empty()
+                    && !access_token.contains(['\r', '\n'])
+            }
+        }
+    }
     /// Optional runtime configuration. Ion takes precedence over the tileset URL.
     /// No source means `Ok(None)`; an incomplete ion configuration is an error.
     /// This does not contact ion or validate account permissions.
@@ -50,7 +63,7 @@ impl CesiumSource {
                     "CESIUM_ION_ASSET_ID must be a positive integer",
                 ))?;
             let access_token = token
-                .filter(|s| !s.trim().is_empty())
+                .filter(|s| !s.trim().is_empty() && !s.contains(['\r', '\n']))
                 .ok_or(CesiumConfigError("Set CESIUM_ION_TOKEN for the ion asset"))?;
             return Ok(Some(Self::Ion {
                 asset_id,
