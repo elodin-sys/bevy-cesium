@@ -1,0 +1,53 @@
+name: API docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/bevy-tiles/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install 1.98.0 --profile minimal
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: docs-linux-1.98-${{ hashFiles('Cargo.lock') }}
+          restore-keys: docs-linux-1.98-
+      - name: Build rustdoc
+        env:
+          RUSTUP_TOOLCHAIN: 1.98.0
+        run: cargo doc -p bevy-tiles --no-deps --locked
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

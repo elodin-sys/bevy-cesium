@@ -49,6 +49,8 @@ The demo orbits the AGI sample (hold Space to pause). `CESIUM_TILESET_URL` selec
 
 ## Application API
 
+Generated reference: <https://elodin-sys.github.io/bevy-cesium/bevy_tiles/>.
+
 Add `CesiumPlugin::new(CesiumSource::Url(url))`, provide a `CesiumGeoreference` ECEF-to-world matrix, and mark participating cameras with `CesiumCamera`. Tile poses remain f64 until transformed into the local frame. The default adapter is intended for local scenes; it does not implement planet-scale camera navigation.
 
 `CesiumSource::from_env()` optionally reads `CESIUM_TILESET_URL` or `CESIUM_ION_ASSET_ID` / `CESIUM_ION_TOKEN`. It returns `None` when disabled and a redacted configuration error for incomplete settings. Ion takes precedence; invalid ion settings do not silently fall back to the URL. Programmatic configuration remains available. This validates configuration syntax, not ion credentials.
