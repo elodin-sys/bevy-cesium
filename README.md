@@ -21,27 +21,16 @@ integration for Bevy 0.19 and Cesium Native 0.65.0, not an official Cesium produ
 - **ECEF** means positions in meters measured from the center of Earth. This
   lets the scenery and geographically located objects share one coordinate system.
 
-## What works today
-
-The public AGI buildings sample works with multiple cameras. The release tests
-check geographic placement and materials. Ion configuration is implemented,
-but a real ion account has not been tested in this release.
-
-**Cesium Native supports more than this plugin currently exposes.** Its terrain
-and imagery features are not automatically available through our small bridge.
-In particular, imagery overlays are not exposed, and a complete Google or
-Cesium World Terrain workflow has not been validated here.
-
-Buildings with textures, terrain and imagery are different inputs: terrain is
-the shape of the ground; imagery is a picture draped over it. Google
-Photorealistic 3D Tiles is textured 3D geometry, a separate data source.
-
 ## Repository structure
 
 - `cesium-native-bridge`: owned Rust data and a private CXX boundary to Cesium Native. Native pointers stay private. Sessions stay on their creating thread.
 - `bevy-tiles`: shared scene contract and Bevy renderer. No C++ dependency.
 - `bevy-cesium`: Cesium Native backend for that contract.
 - `examples/viewer.rs`: ordinary Bevy application; no Elodin, Python SDK or database.
+
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/c504a675-1fb4-4dd5-9a97-1b4628dfe8d3" />
+
+
 
 ## Run from this repository
 
