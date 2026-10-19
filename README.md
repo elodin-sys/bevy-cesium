@@ -1,6 +1,44 @@
 # Cesium for Bevy
 
-A reusable Bevy 0.19 plugin backed by Cesium Native 0.65.0. Maintained by Elodin as a reusable library, independently of the Editor; it is not an official Cesium integration.
+A Rust library for displaying geographic 3D scenes in a Bevy application.
+It downloads the parts of a scene needed by the cameras and turns them into
+Bevy meshes and textures. Your application supplies cameras, lighting,
+simulation and user interface.
+
+Maintained by Elodin, independently of the Editor. This is an experimental
+integration for Bevy 0.19 and Cesium Native 0.65.0, not an official Cesium product.
+
+## The pieces, in plain terms
+
+- **3D Tiles** is a format that splits a large scene into smaller files. The
+  plugin loads more detail as the camera gets closer.
+- **Cesium Native** is Cesium's C++ engine. It selects, downloads and decodes
+  those files. A small Rust/C++ bridge connects it to this plugin.
+- **Bevy** draws the scene locally on your GPU.
+- **Cesium ion** is an optional service for hosting and accessing data. With
+  ion, you supply an asset ID and an access token. A public tileset URL can work
+  without an ion account. Ion does not render the scene for you.
+- **Caevy** is our alternative Rust streaming engine. Both plugins share the
+  same Bevy renderer and scene API, but do not support every same data format.
+- **ECEF** means positions in meters measured from the center of Earth. This
+  lets the scenery and geographically located objects share one coordinate system.
+
+## What works today
+
+The public AGI buildings sample works with multiple cameras. The release tests
+check geographic placement and materials. Ion configuration is implemented,
+but a real ion account has not been tested in this release.
+
+**Cesium Native supports more than this plugin currently exposes.** Its terrain
+and imagery features are not automatically available through our small bridge.
+In particular, imagery overlays are not exposed, and a complete Google or
+Cesium World Terrain workflow has not been validated here.
+
+Buildings with textures, terrain and imagery are different inputs: terrain is
+the shape of the ground; imagery is a picture draped over it. Google
+Photorealistic 3D Tiles is textured 3D geometry, a separate data source.
+
+## Repository structure
 
 - `cesium-native-bridge`: owned Rust data and a private CXX boundary to Cesium Native. Native pointers stay private. Sessions stay on their creating thread.
 - `bevy-tiles`: shared scene contract and Bevy renderer, also used by Caevy. No C++ dependency.
