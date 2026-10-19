@@ -18,8 +18,6 @@ integration for Bevy 0.19 and Cesium Native 0.65.0, not an official Cesium produ
 - **Cesium ion** is an optional service for hosting and accessing data. With
   ion, you supply an asset ID and an access token. A public tileset URL can work
   without an ion account. Ion does not render the scene for you.
-- **Caevy** is our alternative Rust streaming engine. Both plugins share the
-  same Bevy renderer and scene API, but do not support every same data format.
 - **ECEF** means positions in meters measured from the center of Earth. This
   lets the scenery and geographically located objects share one coordinate system.
 
@@ -41,7 +39,7 @@ Photorealistic 3D Tiles is textured 3D geometry, a separate data source.
 ## Repository structure
 
 - `cesium-native-bridge`: owned Rust data and a private CXX boundary to Cesium Native. Native pointers stay private. Sessions stay on their creating thread.
-- `bevy-tiles`: shared scene contract and Bevy renderer, also used by Caevy. No C++ dependency.
+- `bevy-tiles`: shared scene contract and Bevy renderer. No C++ dependency.
 - `bevy-cesium`: Cesium Native backend for that contract.
 - `examples/viewer.rs`: ordinary Bevy application; no Elodin, Python SDK or database.
 
@@ -70,11 +68,6 @@ Applications with their own floating-origin system use `.with_external_coordinat
 
 The host must display `CesiumCredits` in accordance with its data provider's requirements, including applicable links and logos. The minimal demo displays returned HTML as text and is only an attribution example for the public sample; it is not a general HTML attribution renderer. `CesiumStatus` exposes pending loads, failures and tile counts without logging signed URLs.
 
-Both plugins use the same source, ECEF views, placement components, credits,
-status and Bevy material conversion. Existing `Cesium*` names remain available;
-Caevy re-exports the same scene types under `Caevy*` names. Select one backend
-per application. Matching APIs do not imply identical format coverage or LOD selection.
-
 `.with_maximum_screen_error(pixels)` controls refinement and
 `.with_unused_cache_bytes(bytes)` controls eviction pressure. Defaults are 16 px
 and 256 MiB. Active tiles can exceed the budget; GPU allocations are additional.
@@ -92,8 +85,7 @@ The shared API also accepts `CesiumSource::Terrain` with optional
 `GeographicImagery`. The Native adapter currently rejects imagery overlays
 explicitly: the SDK supports overlays, but this bridge does not expose them.
 Terrain without an overlay is passed to Native; a full terrain/Google workflow
-has not been validated in this plugin. Caevy's supported subset is documented
-in that repository's validation checklist.
+has not been validated in this plugin.
 
 ## Usage examples
 
