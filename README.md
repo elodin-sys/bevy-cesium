@@ -72,11 +72,27 @@ Ion access is delegated to Cesium Native. Supply an asset ID and a scoped token
 through `CesiumSource::Ion` or the environment. Credential storage and UI belong
 to the host. A successful build is not validation of a live ion account or asset.
 
-The shared API also accepts `CesiumSource::Terrain` with optional
-`GeographicImagery`. The Native adapter currently rejects imagery overlays
-explicitly: the SDK supports overlays, but this bridge does not expose them.
-Terrain without an overlay is passed to Native; a full terrain/Google workflow
-has not been validated in this plugin.
+For ion terrain with aerial imagery, set `CESIUM_ION_ASSET_ID=1` and
+`CESIUM_ION_IMAGERY_ASSET_ID=2`, together with `CESIUM_ION_TOKEN`. The Native
+bridge attaches one ion raster overlay, maps its texture coordinates onto the
+terrain, and updates resident meshes as imagery arrives. Relief and imagery
+stream independently. This path has been visually exercised in Elodin's RC-jet
+example on Apple Silicon macOS; it does not implement a disk cache.
+
+The imagery selection is currently process-wide and applies to ion sessions.
+It uses the terrain session's token. General overlay composition and the
+shared API's `GeographicImagery` variant are not yet exposed by this adapter.
+The bridge must use the same Release-mode `NDEBUG` layout as the native SDK.
+
+The regular tests use local fixtures. An optional live smoke test checks that
+World Terrain receives textured replacements near the Mojave RC field:
+
+```sh
+CESIUM_ION_IMAGERY_ASSET_ID=2 cargo test --release -p cesium-native-bridge \
+  --test ion_imagery -- --ignored
+```
+
+Supply `CESIUM_ION_TOKEN` or `CESIUM_ION_TOKEN_FILE` for that test.
 
 ## Usage examples
 

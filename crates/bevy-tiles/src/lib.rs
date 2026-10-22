@@ -240,6 +240,12 @@ fn stream<B: Backend>(
     status.pending = frame.pending;
     status.visible_tiles = frame.visible.len();
     for tile in frame.loaded {
+        // An imagery attachment can replace an already resident tile.
+        if let Some(previous) = native.tiles.remove(&tile.id) {
+            for entity in previous {
+                commands.entity(entity).despawn();
+            }
+        }
         let mut entities = Vec::new();
         for p in tile.primitives {
             let matrix = DMat4::from_cols_array(&p.transform);
@@ -341,7 +347,114 @@ fn stream<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::asset::AssetApp;
     use bevy::math::{DQuat, DVec3};
+
+    struct ReplacingTile(u8);
+    impl Backend for ReplacingTile {
+        fn open(_: &CesiumSource, _: Options) -> Result<Self, BackendError> {
+            Ok(Self(0))
+        }
+        fn update(&mut self, _: &[CesiumView], _: f32) -> Result<Frame, BackendError> {
+            let tile = || Tile {
+                id: 42,
+                primitives: vec![Primitive {
+                    transform: DMat4::IDENTITY.to_cols_array(),
+                    positions: vec![0., 0., 0., 1., 0., 0., 0., 1., 0.],
+                    normals: vec![0., 0., 1., 0., 0., 1., 0., 0., 1.],
+                    uvs: vec![0., 0., 1., 0., 0., 1.],
+                    indices: vec![0, 1, 2],
+                    base_color: [1.; 4],
+                    pixels: vec![10, 20, 30, 255],
+                    width: 1,
+                    height: 1,
+                    double_sided: false,
+                    unlit: false,
+                    metallic: 0.,
+                    roughness: 1.,
+                    emissive: [0.; 3],
+                    alpha_mode: 0,
+                    alpha_cutoff: 0.5,
+                }],
+            };
+            let frame = match self.0 {
+                0 => Frame {
+                    loaded: vec![tile()],
+                    visible: vec![42],
+                    ..default()
+                },
+                1 => Frame {
+                    loaded: vec![tile(), tile()],
+                    visible: vec![42],
+                    ..default()
+                },
+                _ => Frame {
+                    removed: vec![42],
+                    ..default()
+                },
+            };
+            self.0 += 1;
+            Ok(frame)
+        }
+    }
+
+    #[test]
+    fn imagery_replacements_do_not_leave_duplicate_tile_entities() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .add_plugins(
+                TilesPlugin::<ReplacingTile>::new(CesiumSource::Url("fixture".into()))
+                    .with_external_coordinates(),
+            );
+        app.update();
+        let previous = app
+            .world_mut()
+            .query_filtered::<Entity, With<CesiumPrimitive>>()
+            .single(app.world())
+            .unwrap();
+        app.update();
+        let current = app
+            .world_mut()
+            .query_filtered::<Entity, With<CesiumPrimitive>>()
+            .single(app.world())
+            .unwrap();
+        assert_ne!(previous, current);
+        assert!(app.world().get_entity(previous).is_err());
+        assert_eq!(
+            app.world().get::<Visibility>(current),
+            Some(&Visibility::Visible)
+        );
+        assert_eq!(app.world().resource::<CesiumStatus>().resident_tiles, 1);
+        let material = &app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(current)
+            .unwrap()
+            .0;
+        let image = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(material)
+            .unwrap()
+            .base_color_texture
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(image)
+                .unwrap()
+                .data
+                .as_deref(),
+            Some([10, 20, 30, 255].as_slice())
+        );
+        app.update();
+        assert!(app.world().get_entity(current).is_err());
+        assert_eq!(app.world().resource::<CesiumStatus>().resident_tiles, 0);
+    }
+
     struct NeverOpen;
     impl Backend for NeverOpen {
         fn open(_: &CesiumSource, _: Options) -> Result<Self, BackendError> {

@@ -4,6 +4,8 @@
 #include <Cesium3DTilesSelection/Tileset.h>
 #include <Cesium3DTilesSelection/ViewState.h>
 #include <Cesium3DTilesSelection/ViewUpdateResult.h>
+#include <Cesium3DTilesSelection/RasterOverlayCollection.h>
+#include <CesiumRasterOverlays/IonRasterOverlay.h>
 #include <CesiumAsync/ITaskProcessor.h>
 #include <CesiumCurl/CurlAssetAccessor.h>
 #include <CesiumGltf/AccessorUtility.h>
@@ -17,6 +19,8 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <charconv>
+#include <unordered_map>
 
 namespace cesium_bridge {
 namespace {
@@ -62,9 +66,35 @@ public:
   }
 };
 
-Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
+struct Raster {
+  uint32_t width = 0, height = 0;
+  std::vector<uint8_t> pixels;
+};
+
+Raster extractRaster(const CesiumImage::ImageAsset& image) {
+  Raster raster;
+  if (image.width <= 0 || image.height <= 0 || image.bytesPerChannel != 1 ||
+      image.channels < 1 || image.channels > 4 ||
+      image.compressedPixelFormat != CesiumImage::GpuCompressedPixelFormat::NONE) return raster;
+  const auto count = size_t(image.width) * size_t(image.height);
+  if (image.pixelData.size() < count * image.channels) return raster;
+  raster.width = image.width; raster.height = image.height;
+  raster.pixels.reserve(count * 4);
+  for (size_t i = 0; i < count; ++i) {
+    auto read = [&](int c) { return uint8_t(image.pixelData[i * image.channels + c]); };
+    const bool gray = image.channels < 3;
+    raster.pixels.push_back(read(0));
+    raster.pixels.push_back(read(gray ? 0 : 1));
+    raster.pixels.push_back(read(gray ? 0 : 2));
+    raster.pixels.push_back(image.channels == 2 ? read(1) : image.channels == 4 ? read(3) : 255);
+  }
+  return raster;
+}
+
+Tile extract(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
+    const Raster* raster = nullptr, int32_t overlayCoordinate = 0,
+    glm::dvec2 translation = glm::dvec2(0.0), glm::dvec2 scale = glm::dvec2(1.0)) {
   Tile output{};
-  model.generateMissingNormalsSmooth();
   const auto root = CesiumGltfContent::GltfUtilities::applyGltfUpAxisTransform(
       model, CesiumGltfContent::GltfUtilities::applyRtcCenter(model, tileTransform));
   model.forEachPrimitiveInScene(-1, [&](const CesiumGltf::Model& gltf,
@@ -79,7 +109,14 @@ Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
       if (material.pbrMetallicRoughness && material.pbrMetallicRoughness->baseColorTexture)
         texCoord = material.pbrMetallicRoughness->baseColorTexture->texCoord;
     }
-    const auto uvs = CesiumGltf::getTexCoordAccessorView(gltf, primitive, texCoord);
+    auto texturedPrimitive = primitive;
+    if (raster) {
+      auto attribute = primitive.attributes.find("_CESIUMOVERLAY_" + std::to_string(overlayCoordinate));
+      if (attribute == primitive.attributes.end()) return;
+      texturedPrimitive.attributes["TEXCOORD_0"] = attribute->second;
+      texCoord = 0;
+    }
+    const auto uvs = CesiumGltf::getTexCoordAccessorView(gltf, texturedPrimitive, texCoord);
     const auto count = std::visit(CesiumGltf::CountFromAccessor{}, positions);
     if (count <= 0) return;
     Primitive p{};
@@ -96,8 +133,11 @@ Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
         p.positions.push_back(float((*position)[axis]));
         p.normals.push_back(normal ? float((*normal)[axis]) : float(axis == 1));
       }
-      p.uvs.push_back(uv ? float(uv->x) : 0.f);
-      p.uvs.push_back(uv ? float(uv->y) : 0.f);
+      const auto mapped = (uv ? *uv : glm::dvec2(0.0)) * scale + translation;
+      p.uvs.push_back(float(mapped.x));
+      // Native raster UVs have their origin at the bottom left; Bevy images
+      // use top-left texture coordinates.
+      p.uvs.push_back(float(raster ? 1.0 - mapped.y : mapped.y));
     }
     if (primitive.indices >= 0) {
       auto indices = CesiumGltf::getIndexAccessorView(gltf, primitive);
@@ -151,6 +191,14 @@ Tile extract(CesiumGltf::Model& model, const glm::dmat4& tileTransform) {
         }
       }
     }
+    if (raster) {
+      p.base_color = {1.f, 1.f, 1.f, 1.f};
+      p.metallic = 0.f; p.roughness = 1.f;
+      p.width = raster->width; p.height = raster->height;
+      p.pixels.clear();
+      p.pixels.reserve(raster->pixels.size());
+      for (auto pixel : raster->pixels) p.pixels.push_back(pixel);
+    }
     output.primitives.push_back(std::move(p));
   });
   return output;
@@ -161,12 +209,15 @@ public:
   uint64_t nextId = 1;
   rust::Vec<Tile> loaded;
   rust::Vec<uint64_t> removed;
+  std::unordered_map<uint64_t, const Raster*> attached;
   CesiumAsync::Future<TileLoadResultAndRenderResources> prepareInLoadThread(
       const CesiumAsync::AsyncSystem& async, TileLoadResult&& result,
       const glm::dmat4& transform, const std::any&) override {
     auto packet = std::make_unique<Tile>();
-    if (auto* model = std::get_if<CesiumGltf::Model>(&result.contentKind))
+    if (auto* model = std::get_if<CesiumGltf::Model>(&result.contentKind)) {
+      model->generateMissingNormalsSmooth();
       *packet = extract(*model, transform);
+    }
     return async.createResolvedFuture(TileLoadResultAndRenderResources{std::move(result), packet.release()});
   }
   void* prepareInMainThread(Cesium3DTilesSelection::Tile&, void* data) override {
@@ -181,16 +232,43 @@ public:
     if (ready) {
       auto* id = static_cast<uint64_t*>(ready);
       removed.push_back(*id);
+      attached.erase(*id);
       delete id;
     }
   }
-  void* prepareRasterInLoadThread(CesiumImage::ImageAsset&, const std::any&) override { return nullptr; }
-  void* prepareRasterInMainThread(CesiumRasterOverlays::RasterOverlayTile&, void*) override { return nullptr; }
-  void freeRaster(const CesiumRasterOverlays::RasterOverlayTile&, void*, void*) noexcept override {}
-  void attachRasterInMainThread(const Cesium3DTilesSelection::Tile&, int32_t,
-      const CesiumRasterOverlays::RasterOverlayTile&, void*, const glm::dvec2&, const glm::dvec2&) override {}
-  void detachRasterInMainThread(const Cesium3DTilesSelection::Tile&, int32_t,
-      const CesiumRasterOverlays::RasterOverlayTile&, void*) noexcept override {}
+  void* prepareRasterInLoadThread(CesiumImage::ImageAsset& image, const std::any&) override {
+    return new Raster(extractRaster(image));
+  }
+  void* prepareRasterInMainThread(CesiumRasterOverlays::RasterOverlayTile&, void* data) override {
+    return data;
+  }
+  void freeRaster(const CesiumRasterOverlays::RasterOverlayTile&, void* loading, void* ready) noexcept override {
+    delete static_cast<Raster*>(loading);
+    delete static_cast<Raster*>(ready);
+  }
+  void attachRasterInMainThread(const Cesium3DTilesSelection::Tile& tile, int32_t coordinate,
+      const CesiumRasterOverlays::RasterOverlayTile&, void* data,
+      const glm::dvec2& translation, const glm::dvec2& scale) override {
+    const auto* raster = static_cast<const Raster*>(data);
+    const auto* content = tile.getContent().getRenderContent();
+    if (!raster || raster->pixels.empty() || !content || !content->getRenderResources()) return;
+    const auto id = *static_cast<const uint64_t*>(content->getRenderResources());
+    auto packet = extract(content->getModel(), tile.getTransform(), raster, coordinate, translation, scale);
+    packet.id = id;
+    attached[id] = raster;
+    loaded.push_back(std::move(packet));
+  }
+  void detachRasterInMainThread(const Cesium3DTilesSelection::Tile& tile, int32_t,
+      const CesiumRasterOverlays::RasterOverlayTile&, void* data) noexcept override {
+    const auto* content = tile.getContent().getRenderContent();
+    if (!content || !content->getRenderResources()) return;
+    const auto id = *static_cast<const uint64_t*>(content->getRenderResources());
+    auto previous = attached.find(id);
+    if (previous == attached.end() || previous->second != data) return;
+    attached.erase(previous);
+    // The next attachment replaces the texture. Keep the last good image
+    // while its replacement loads to avoid flashing untextured terrain.
+  }
 };
 }
 
@@ -244,6 +322,19 @@ Session::Session(rust::Str url) : impl(std::make_unique<Impl>()) {
 Session::Session(int64_t asset, rust::Str token) : impl(std::make_unique<Impl>()) {
   registerContentTypes();
   impl->tileset = std::make_unique<Tileset>(impl->externals(), asset, std::string(token), impl->options());
+  if (const auto* value = std::getenv("CESIUM_ION_IMAGERY_ASSET_ID")) {
+    const std::string text(value);
+    int64_t imagery = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), imagery);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || imagery <= 0)
+      throw std::runtime_error("Invalid imagery asset ID");
+    CesiumRasterOverlays::RasterOverlayOptions options;
+    auto failed = impl->loadFailed;
+    options.loadErrorCallback = [failed](const auto&) { failed->store(true); };
+    impl->tileset->getOverlays().add(
+        CesiumUtility::IntrusivePointer<CesiumRasterOverlays::IonRasterOverlay>(
+            new CesiumRasterOverlays::IonRasterOverlay("Aerial imagery", imagery, std::string(token), options)));
+  }
   impl->observeRootFailure();
 }
 Session::~Session() = default;

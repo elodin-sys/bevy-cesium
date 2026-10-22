@@ -64,6 +64,7 @@ pub struct Tile {
 }
 #[derive(Default)]
 pub struct Frame {
+    /// New tiles or replacements for a resident ID (for example, new imagery).
     pub loaded: Vec<Tile>,
     pub visible: Vec<u64>,
     pub removed: Vec<u64>,

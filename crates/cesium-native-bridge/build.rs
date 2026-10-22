@@ -12,6 +12,9 @@ fn main() {
             .file("src/bridge.cpp")
             .include("include")
             .include(root.join("include"))
+            // The supported SDK is built in Release mode. This must match:
+            // Cesium's ReferenceCounted layout changes when NDEBUG is absent.
+            .define("NDEBUG", None)
             .std("c++20");
         if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             bridge
