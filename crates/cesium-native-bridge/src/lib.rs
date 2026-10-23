@@ -32,6 +32,15 @@ impl Session {
         self.0.pin_mut().configure(error, cache_bytes);
         Ok(())
     }
+    /// Preserve acquired detail until it leaves every view plus this meter margin.
+    /// Zero disables retention and releases all retained requirements.
+    pub fn configure_retention(&mut self, margin_meters: f64) -> Result<(), Error> {
+        if !margin_meters.is_finite() || margin_meters < 0.0 {
+            return Err(Error);
+        }
+        self.0.pin_mut().configure_retention(margin_meters);
+        Ok(())
+    }
     pub fn update(&mut self, views: &[View], seconds: f32) -> Result<Frame, Error> {
         if !seconds.is_finite() || seconds < 0.0 || views.iter().any(|v| !valid_view(v)) {
             return Err(Error);
@@ -107,6 +116,8 @@ mod ffi {
         removed: Vec<u64>,
         credits: Vec<String>,
         pending: u32,
+        retained_tiles: u32,
+        selection_complete: bool,
         load_failed: bool,
     }
 
@@ -120,6 +131,7 @@ mod ffi {
         fn open_url(url: &str) -> Result<UniquePtr<Session>>;
         fn open_ion(asset_id: i64, token: &str) -> Result<UniquePtr<Session>>;
         fn configure(self: Pin<&mut Session>, error: f64, cache_bytes: u64);
+        fn configure_retention(self: Pin<&mut Session>, margin_meters: f64);
         fn update(self: Pin<&mut Session>, views: &[View], seconds: f32) -> Result<Frame>;
     }
 }

@@ -1,162 +1,110 @@
 # Cesium for Bevy
 
-A Rust library for displaying geographic 3D scenes in a Bevy application.
-It downloads the parts of a scene needed by the cameras and turns them into
-Bevy meshes and textures. Your application supplies cameras, lighting,
-simulation and user interface.
+Terrain and 3D Tiles streaming for Bevy **0.19**, using Cesium Native **0.65.0**.
+Maintained by Elodin; experimental, independently of Cesium.
 
-Maintained by Elodin, independently of the Editor. This is an experimental
-integration for Bevy 0.19 and Cesium Native 0.65.0, not an official Cesium product.
+`cesium-native-bridge` loads and decodes data; `bevy-tiles` publishes meshes and
+materials; `bevy-cesium` connects them. The host supplies cameras, lighting,
+coordinates and attribution. Rendering runs locally on the GPU.
 
-## The pieces, in plain terms
-
-- **3D Tiles** is a format that splits a large scene into smaller files. The
-  plugin loads more detail as the camera gets closer.
-- **Cesium Native** is Cesium's C++ engine. It selects, downloads and decodes
-  those files. A small Rust/C++ bridge connects it to this plugin.
-- **Bevy** draws the scene locally on your GPU.
-- **Cesium ion** is an optional service for hosting and accessing data. With
-  ion, you supply an asset ID and an access token. A public tileset URL can work
-  without an ion account. Ion does not render the scene for you.
-- **ECEF** means positions in meters measured from the center of Earth. This
-  lets the scenery and geographically located objects share one coordinate system.
-
-## Repository structure
-
-- `cesium-native-bridge`: owned Rust data and a private CXX boundary to Cesium Native. Native pointers stay private. Sessions stay on their creating thread.
-- `bevy-tiles`: shared scene contract and Bevy renderer. No C++ dependency.
-- `bevy-cesium`: Cesium Native backend for that contract.
-- `examples/viewer.rs`: ordinary Bevy application; no Elodin, Python SDK or database.
-
-<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/c504a675-1fb4-4dd5-9a97-1b4628dfe8d3" />
-
-
-
-## Run from this repository
+## Build and run
 
 ```sh
-nix develop path:.
-just prepare      # build the pinned native SDK; cached outside this checkout
+nix develop
+just prepare      # cached native SDK; or set CESIUM_NATIVE_DIR
 just install
-just viewer       # public AGI headquarters sample; no token needed
+just viewer       # public sample, no token required
 just test
 just check
 ```
 
-An existing SDK may be selected with `CESIUM_NATIVE_DIR`. Building requires C++20 and CMake in addition to Rust. The native SDK script uses `uv` for its small build patch. This first extraction is being validated on Apple Silicon macOS; other platforms are not yet certified. Keep API tokens outside source control.
+Validated locally on Apple Silicon macOS. `CESIUM_TILESET_URL` selects a tileset.
+For ion terrain and imagery, set `CESIUM_ION_ASSET_ID=1`,
+`CESIUM_ION_IMAGERY_ASSET_ID=2` and `CESIUM_ION_TOKEN` outside source control.
+Ion imagery is currently one process-wide overlay using the terrain token.
+`CESIUM_LAT`, `CESIUM_LON` and `CESIUM_ALT` configure the viewer's local origin.
 
-The demo orbits the AGI sample (hold Space to pause). `CESIUM_TILESET_URL` selects another source. `CESIUM_LAT`, `CESIUM_LON` (degrees), and `CESIUM_ALT` (meters above the WGS84 ellipsoid) set its local origin. Alternatively set `CESIUM_ION_ASSET_ID` and `CESIUM_ION_TOKEN`. `CESIUM_SCREENSHOT=/tmp/cesium.png` captures the loaded viewport.
+## Integration
 
-## Application API
+Add `CesiumPlugin::new(source)`, mark cameras with `CesiumCamera`, and provide
+`CesiumGeoreference` (ECEF to local coordinates). Positions stay double precision
+until local placement. Sources can be URLs or ion assets; `CesiumSource::from_env()`
+reads the environment without exposing credentials in errors.
 
-Generated reference: <https://elodin-sys.github.io/bevy-cesium/bevy_tiles/>.
+Floating-origin hosts use `.with_external_coordinates()`, supply ECEF
+`CesiumViews` and place new `CesiumPrimitive` entities themselves. Schedule camera
+motion before `CesiumSet::Views`, placement in `Placement`, and capture checks
+after `Publish`: **Views → Stream → Placement → Publish**.
+[API reference](https://elodin-sys.github.io/bevy-cesium/bevy_tiles/).
 
-Add `CesiumPlugin::new(CesiumSource::Url(url))`, provide a `CesiumGeoreference` ECEF-to-world matrix, and mark participating cameras with `CesiumCamera`. Tile poses remain f64 until transformed into the local frame. The default adapter is intended for local scenes; it does not implement planet-scale camera navigation.
+## Terrain stability
 
-`CesiumSource::from_env()` optionally reads `CESIUM_TILESET_URL` or `CESIUM_ION_ASSET_ID` / `CESIUM_ION_TOKEN`. It returns `None` when disabled and a redacted configuration error for incomplete settings. Ion takes precedence; invalid ion settings do not silently fall back to the URL. Programmatic configuration remains available. This validates configuration syntax, not ion credentials.
+CPU-loaded tiles can still be awaiting GPU uploads. The renderer keeps the
+previous selection until every replacement mesh/material is prepared, then
+publishes it together. Imagery revisions replace their predecessors without
+exposing both. This prevents upload gaps and parent/child overlap at publication;
+it is separate from camera render order and shader-pipeline warm-up.
 
-Applications with their own floating-origin system use `.with_external_coordinates()`: populate `CesiumViews` before `CesiumSet::Stream`, then place newly spawned `CesiumPrimitive` entities in `CesiumSet::Placement`. Each primitive retains its f64 `ecef_from_mesh` transform. This is how Elodin consumes the same plugin without imposing its spatial types on other users.
-
-The host must display `CesiumCredits` in accordance with its data provider's requirements, including applicable links and logos. The minimal demo displays returned HTML as text and is only an attribution example for the public sample; it is not a general HTML attribution renderer. `CesiumStatus` exposes pending loads, failures and tile counts without logging signed URLs.
-
-`.with_maximum_screen_error(pixels)` controls refinement and
-`.with_unused_cache_bytes(bytes)` controls eviction pressure. Defaults are 16 px
-and 256 MiB. Active tiles can exceed the budget; GPU allocations are additional.
-The backend cache accounting differs, so equal settings are not equal memory usage.
-
-The shared renderer uses sRGB base-color textures and linear material factors.
-Lights, environment maps, exposure and tonemapping belong to the host; neither
-plugin installs or adjusts them. This does not establish GPU pixel parity.
-
-Ion access is delegated to Cesium Native. Supply an asset ID and a scoped token
-through `CesiumSource::Ion` or the environment. Credential storage and UI belong
-to the host. A successful build is not validation of a live ion account or asset.
-
-For ion terrain with aerial imagery, set `CESIUM_ION_ASSET_ID=1` and
-`CESIUM_ION_IMAGERY_ASSET_ID=2`, together with `CESIUM_ION_TOKEN`. The Native
-bridge attaches one ion raster overlay, maps its texture coordinates onto the
-terrain, and updates resident meshes as imagery arrives. Relief and imagery
-stream independently. This path has been visually exercised in Elodin's RC-jet
-example on Apple Silicon macOS; it does not implement a disk cache.
-
-The imagery selection is currently process-wide and applies to ion sessions.
-It uses the terrain session's token. General overlay composition and the
-shared API's `GeographicImagery` variant are not yet exposed by this adapter.
-The bridge must use the same Release-mode `NDEBUG` layout as the native SDK.
-
-The regular tests use local fixtures. An optional live smoke test checks that
-World Terrain receives textured replacements near the Mojave RC field:
-
-```sh
-CESIUM_ION_IMAGERY_ASSET_ID=2 cargo test --release -p cesium-native-bridge \
-  --test ion_imagery -- --ignored
+```rust,ignore
+app.add_plugins(CesiumPlugin::new(source)
+    .with_maximum_screen_error(16.0)
+    .with_unused_cache_bytes(256 * 1024 * 1024)
+    .with_lod_retention_margin(500.0));
 ```
 
-Supply `CESIUM_ION_TOKEN` or `CESIUM_ION_TOKEN_FILE` for that test.
+Retention preserves the refinement paths of acquired tiles, not just their cached
+bytes. Approaching can add detail; retreating does not discard it while the tile's
+bounds intersect any selection camera, including the configured spatial margin.
+The margin is measured in ECEF meters using conservative bounding spheres. Once
+outside **every** camera plus margin, detail may be released. No-camera scheduling
+gaps keep existing requirements. Retention defaults to disabled (`0`).
 
-## Stable terrain transitions and capture views
+Native geographic views enforce those paths without changing dataset errors or
+saving an ever-growing list of past camera poses. Descendants supersede ancestor
+requirements. Active retained tiles can exceed the unused-cache budget; GPU memory
+is additional. This policy favors quality over a hard memory limit. It does not
+pin detail after leaving the region or make a live flight independent of its history.
 
-The renderer publishes tile visibility in `CesiumSet::Publish`, after `Views →
-Stream → Placement`. Schedule camera movement before `Views`, external tile
-placement in `Placement`, and capture decisions after `Publish`. The ordinary
-camera adapter resolves the current transform hierarchy, including parent motion,
-instead of reading the previous frame's propagated transform.
+## Fixed captures and CI
 
-A CPU-loaded tile is not necessarily ready to draw. With a Bevy render app,
-new meshes/materials stay hidden until the render world acknowledges their
-prepared assets. The previous imagery revision stays alive during uploads.
-A new LOD selection is published only when all requested tiles are ready; a
-partial child set is not mixed with its old parent. Native eviction is deferred
-for a still-published fallback. ECS-only applications have no GPU readiness gate.
-`CesiumStatus::pending_render_tiles` reports the remaining publication work;
-`visible_tiles` counts the published selection. A failed replacement may keep
-old terrain visible; callers must also check load errors and enforce a timeout.
-
-The bridge deliberately keeps GPU readiness separate from Native's load queue.
-This is not a shader-pipeline warm-up guarantee or proof of complete imagery.
-An application requiring pixel comparisons must also warm its camera pipelines,
-wait for imagery, and use fixed inputs and a controlled rendering environment.
-
-For interactive exploration, put the views needed by the simulation's cameras
-in `CesiumDetailViews`. These views remain part of tile selection after live
-cameras move away, preserving their detail requirements rather than just cached
-bytes. The host removes a retained view only after its coverage is safely outside
-all required camera regions (use a spatial margin/hysteresis). Retained views can
-increase CPU/GPU memory use and are not subject to the unused-tile cache budget.
-
-For a fixed capture path, populate all reference views before loading and select
-`CesiumSelectionMode::Fixed`. Live preview cameras are then excluded from LOD
-selection. An empty fixed view list produces an explicit error. Each reference
-view includes its ECEF pose, physical viewport size and FOV; keep those and the
-screen-error threshold fixed. This mode does not freeze asynchronous loading,
-create an offline package, or make network-fetched inputs reproducible. CI still
-needs versioned tiles/imagery and explicit completion/error checks.
+Populate the full required camera path **before loading**:
 
 ```rust,ignore
 app.insert_resource(CesiumDetailViews(reference_camera_path))
     .insert_resource(CesiumSelectionMode::Fixed);
 ```
 
-The offline regression scene exercises same-ID imagery updates, parent/child
-replacement and two explicitly ordered camera viewports under a 1 KiB/frame
-asset-upload budget. It uses generated local geometry and no ion credentials:
+Fixed mode excludes live preview cameras from selection. Keep reference poses,
+physical viewport sizes, FOV, screen-error threshold and input assets fixed.
+After `Publish`, wait for `CesiumStatus::ready_for_capture()`: Native geometry
+and imagery complete, no known content failure, GPU publication complete, and
+eight unchanged complete updates. Enforce a timeout and warm camera pipelines.
+A missing child can leave its parent visible interactively while blocking capture.
+`pending == 0` alone is insufficient: transfers or imagery may still be loading.
+
+Tests use committed local assets: near/far motion, margin release, multiple
+cameras, zero unused-cache budget, scheduling gaps, failed loads, delayed GPU
+preparation, and content comparison across independent sessions. For visual
+parent/child and imagery transitions with two camera viewports:
 
 ```sh
-nix develop
-cargo run --example terrain_stability
-# Optional: save transition frames and exit automatically.
-mkdir -p /tmp/terrain-stability
-CESIUM_STABILITY_OUTPUT=/tmp/terrain-stability cargo run --example terrain_stability
+CESIUM_STABILITY_OUTPUT=/tmp/terrain-stability \
+  cargo run --release --example terrain_stability
 ```
 
-Magenta is the background; it must not flash through the terrain during a
-transition. Colors intentionally change between imagery revisions and LODs.
-The unit tests additionally delay GPU acknowledgements for several frames and
-check that old tiles survive, children appear together, and obsolete revisions
-are removed. The existing native tests continue to use local file fixtures.
+In Elodin's RC-jet integration, both the Editor and sensor renderer use 500 m
+retention and 16 px screen error. Inactive sensor cameras still contribute their
+terrain requirements. `ELODIN_CESIUM_CAPTURE_VIEWS` supplies a JSON array of ECEF
+reference views; fixed captures wait for readiness or fail after
+`ELODIN_CESIUM_CAPTURE_TIMEOUT` seconds (default 120). Elodin pins this library to
+an exact Git revision; the RC-jet integration branch can remain local.
 
-## Usage examples
+## Scope
 
-### Integration into Elodin Editor
-
-https://github.com/user-attachments/assets/8cc6c6b6-20e7-4b96-a51c-ef1f1659bdb0
+This stage provides streamed terrain/imagery, geographic placement, stable
+publication and spatial LOD retention. Ion data can change between runs.
+Repeatable CI needs versioned local inputs and a controlled GPU/rendering setup;
+these tests establish content/selection stability, not cross-machine pixel parity.
+Saved terrain packages, persistent caching, strict offline/hybrid modes and terrain
+collision queries are separate work. The host must display `CesiumCredits` with
+the provider's required links/logos. Lighting and exposure remain host decisions.

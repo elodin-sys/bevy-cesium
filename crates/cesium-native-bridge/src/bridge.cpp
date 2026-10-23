@@ -21,10 +21,78 @@
 #include <thread>
 #include <charconv>
 #include <unordered_map>
+#include <unordered_set>
+#include <limits>
+#include <algorithm>
 
 namespace cesium_bridge {
 namespace {
 using namespace Cesium3DTilesSelection;
+
+// Geographic selection views preserve the refinement path to previously drawn
+// tiles. They do not change dataset errors, freeze cameras, or request arbitrary
+// maximum detail. Live views remain free to refine further.
+class RetainedMeasure final : public ViewStateMeasureDelegate {
+public:
+  std::unordered_set<const Cesium3DTilesSelection::Tile*> ancestors;
+  double computeSelectionMeasure(const Cesium3DTilesSelection::Tile& tile,
+      double, uint32_t) const override {
+    return ancestors.contains(&tile) ? std::numeric_limits<double>::max() : 0.0;
+  }
+};
+
+class DetailRetention {
+  using NativeTile = Cesium3DTilesSelection::Tile;
+  std::unordered_map<const NativeTile*, NativeTile::ConstPointer> tiles;
+public:
+  double margin = 0.0;
+  void clear() { tiles.clear(); }
+  size_t size() const { return tiles.size(); }
+
+  void appendViews(std::vector<ViewState>& views) {
+    if (margin <= 0.0) return;
+    // No cameras is a scheduling gap, not proof that terrain is no longer
+    // needed. An explicit configure_retention(0) releases it immediately.
+    if (!views.empty()) {
+      std::erase_if(tiles, [&](const auto& entry) {
+        const auto box = getOrientedBoundingBoxFromBoundingVolume(entry.first->getBoundingVolume());
+        const auto axes = box.getHalfAxes();
+        const double radius = glm::length(axes[0]) + glm::length(axes[1]) + glm::length(axes[2]) + margin;
+        const BoundingVolume expanded = CesiumGeometry::BoundingSphere(box.getCenter(), radius);
+        return std::none_of(views.begin(), views.end(), [&](const ViewState& view) {
+          return view.isBoundingVolumeVisible(expanded);
+        });
+      });
+    }
+    auto measure = std::make_shared<RetainedMeasure>();
+    for (const auto& [tile, reference] : tiles)
+      for (auto* parent = tile->getParent(); parent; parent = parent->getParent())
+        measure->ancestors.insert(parent);
+    for (const auto& [tile, reference] : tiles)
+      views.emplace_back(tile->getBoundingVolume(), measure);
+  }
+
+  void observe(const ViewUpdateResult& result, const std::vector<ViewState>& live) {
+    if (margin <= 0.0) return;
+    for (const auto& tile : result.tilesToRenderThisFrame) {
+      const auto* content = tile->getContent().getRenderContent();
+      if (!content || !content->getRenderResources()) continue;
+      // Do not expand retention by recursively remembering tiles selected only
+      // by retention views. Acquire detail only where real/reference cameras look.
+      if (std::any_of(live.begin(), live.end(), [&](const ViewState& view) {
+            return view.isBoundingVolumeVisible(tile->getBoundingVolume());
+          }))
+        tiles.try_emplace(tile.get(), tile);
+    }
+    // A finer retained tile already requires descent through its ancestors.
+    // Drop their broad volumes so a globe-sized root cannot pin a whole journey.
+    std::unordered_set<const NativeTile*> superseded;
+    for (const auto& [tile, reference] : tiles)
+      for (auto* parent = tile->getParent(); parent; parent = parent->getParent())
+        superseded.insert(parent);
+    for (const auto* tile : superseded) tiles.erase(tile);
+  }
+};
 
 void registerContentTypes() {
   // Native's process-wide converter registry must not be mutated while another
@@ -285,6 +353,7 @@ struct Session::Impl {
   std::shared_ptr<Resources> resources = std::make_shared<Resources>();
   std::shared_ptr<CesiumUtility::CreditSystem> credits = std::make_shared<CesiumUtility::CreditSystem>();
   std::unique_ptr<Tileset> tileset;
+  DetailRetention retention;
   std::shared_ptr<std::atomic<bool>> loadFailed = std::make_shared<std::atomic<bool>>(false);
   TilesetOptions options() {
     TilesetOptions options;
@@ -306,6 +375,8 @@ struct Session::Impl {
   }
   ~Impl() {
     if (!tileset) return;
+    // Intrusive references must be released before destroying their tileset.
+    retention.clear();
     auto finished = tileset->getAsyncDestructionCompleteEvent();
     tileset.reset();
     while (!finished.isReady()) {
@@ -342,6 +413,10 @@ void Session::configure(double error, uint64_t cacheBytes) {
   impl->tileset->getOptions().maximumScreenSpaceError = error;
   impl->tileset->getOptions().maximumCachedBytes = static_cast<int64_t>(cacheBytes);
 }
+void Session::configure_retention(double marginMeters) {
+  impl->retention.margin = marginMeters;
+  if (marginMeters <= 0.0) impl->retention.clear();
+}
 std::unique_ptr<Session> open_url(rust::Str url) { return std::make_unique<Session>(url); }
 std::unique_ptr<Session> open_ion(int64_t asset, rust::Str token) { return std::make_unique<Session>(asset, token); }
 Frame Session::update(rust::Slice<const View> input, float seconds) {
@@ -354,7 +429,10 @@ Frame Session::update(rust::Slice<const View> input, float seconds) {
   impl->accessor->tick();
   impl->async.dispatchMainThreadTasks();
   auto& tileset = *impl->tileset;
+  const auto live = views;
+  impl->retention.appendViews(views);
   const auto& result = tileset.updateViewGroup(tileset.getDefaultViewGroup(), views, seconds);
+  impl->retention.observe(result, live);
   tileset.loadTiles();
   Frame frame{};
   frame.loaded = std::move(impl->resources->loaded);
@@ -367,7 +445,15 @@ Frame Session::update(rust::Slice<const View> input, float seconds) {
   for (auto credit : impl->credits->getSnapshot().currentCredits)
     frame.credits.push_back(impl->credits->getHtml(credit));
   frame.pending = result.workerThreadTileLoadQueueLength + result.mainThreadTileLoadQueueLength;
+  frame.retained_tiles = static_cast<uint32_t>(impl->retention.size());
   frame.load_failed = impl->loadFailed->load();
+  bool failedContent = false;
+  tileset.forEachLoadedTile([&](const Cesium3DTilesSelection::Tile& tile) {
+    failedContent |= tile.getState() == TileLoadState::Failed ||
+        tile.getState() == TileLoadState::FailedTemporarily;
+  });
+  frame.selection_complete = !frame.load_failed && !failedContent &&
+      !frame.visible.empty() && tileset.computeLoadProgress() >= 100.0f;
   return frame;
 }
 }

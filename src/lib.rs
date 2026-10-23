@@ -33,6 +33,9 @@ impl Backend for NativeBackend {
                 options.unused_cache_bytes as u64,
             )
             .map_err(|_| BackendError("Invalid streaming options"))?;
+        session
+            .configure_retention(options.lod_retention_margin)
+            .map_err(|_| BackendError("Invalid LOD retention margin"))?;
         Ok(Self(session))
     }
     fn update(
@@ -90,6 +93,8 @@ impl Backend for NativeBackend {
             removed: f.removed,
             credits: f.credits,
             pending: f.pending,
+            retained_tiles: f.retained_tiles as usize,
+            selection_complete: f.selection_complete,
             load_failed: f.load_failed,
             error: None,
         })

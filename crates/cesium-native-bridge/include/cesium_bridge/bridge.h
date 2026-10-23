@@ -11,6 +11,7 @@ public:
   Session(int64_t asset, rust::Str token);
   ~Session();
   void configure(double error, uint64_t cacheBytes);
+  void configure_retention(double marginMeters);
   Frame update(rust::Slice<const View> views, float seconds);
 private:
   struct Impl;

@@ -14,12 +14,16 @@ pub struct Options {
     pub unused_cache_bytes: usize,
     /// Refinement threshold in physical screen pixels.
     pub maximum_screen_error: f64,
+    /// Keep acquired detail until its bounds leave every view by this many meters.
+    /// Zero disables retention. Active retained content is outside the unused cache budget.
+    pub lod_retention_margin: f64,
 }
 impl Default for Options {
     fn default() -> Self {
         Self {
             unused_cache_bytes: 256 * 1024 * 1024,
             maximum_screen_error: 16.0,
+            lod_retention_margin: 0.0,
         }
     }
 }
@@ -70,6 +74,10 @@ pub struct Frame {
     pub removed: Vec<u64>,
     pub credits: Vec<String>,
     pub pending: u32,
+    /// Number of spatial detail requirements retained by the backend.
+    pub retained_tiles: usize,
+    /// All requested geometry and imagery loaded; no known failed child content.
+    pub selection_complete: bool,
     pub load_failed: bool,
     pub error: Option<&'static str>,
 }

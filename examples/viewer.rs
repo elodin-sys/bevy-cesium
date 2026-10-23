@@ -125,10 +125,7 @@ fn screenshot(
 ) {
     if !*done
         && time.elapsed_secs() > 15.0
-        && status.visible_tiles > 0
-        && !status.load_failed
-        && status.pending == 0
-        && status.pending_render_tiles == 0
+        && status.ready_for_capture()
         && let Ok(path) = std::env::var("CESIUM_SCREENSHOT")
     {
         *done = true;

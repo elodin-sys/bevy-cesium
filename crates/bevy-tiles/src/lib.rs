@@ -73,6 +73,12 @@ pub struct CesiumCredits {
 #[derive(Resource, Default)]
 pub struct CesiumStatus {
     pub pending: u32,
+    /// Spatial detail requirements held until safely outside all selection views.
+    pub retained_tiles: usize,
+    /// Backend reports requested geometry and imagery complete.
+    pub selection_complete: bool,
+    /// Consecutive complete, published updates with unchanged selection/assets.
+    pub stable_frames: u32,
     pub load_failed: bool,
     pub resident_tiles: usize,
     pub visible_tiles: usize,
@@ -80,6 +86,18 @@ pub struct CesiumStatus {
     pub pending_render_tiles: usize,
     /// Redacted diagnostic, suitable for host UI. No URLs or credentials.
     pub error: Option<&'static str>,
+}
+
+impl CesiumStatus {
+    /// A warm-up gate for a fixed reference path, not a pixel-parity guarantee.
+    /// Hosts must also warm their camera pipelines and enforce a load timeout.
+    pub fn ready_for_capture(&self) -> bool {
+        !self.load_failed
+            && self.selection_complete
+            && self.visible_tiles > 0
+            && self.pending_render_tiles == 0
+            && self.stable_frames >= 8
+    }
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -123,6 +141,13 @@ impl<B: Backend> TilesPlugin<B> {
         self.options.maximum_screen_error = pixels;
         self
     }
+    /// Preserve acquired detail inside all selection views plus a spatial margin.
+    /// Native retains refinement requirements, not just cached bytes. A positive
+    /// margin enables retention; zero restores ordinary dynamic selection.
+    pub fn with_lod_retention_margin(mut self, meters: f64) -> Self {
+        self.options.lod_retention_margin = meters;
+        self
+    }
     /// Disable ordinary camera collection and local placement. The application
     /// supplies CesiumViews and places new CesiumPrimitive entities itself.
     pub fn with_external_coordinates(mut self) -> Self {
@@ -153,6 +178,8 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
             Err(BackendError("Invalid source configuration"))
         } else if self.options.maximum_screen_error.is_finite()
             && self.options.maximum_screen_error > 0.0
+            && self.options.lod_retention_margin.is_finite()
+            && self.options.lod_retention_margin >= 0.0
             && self.options.unused_cache_bytes as u64 <= i64::MAX as u64
         {
             B::open(&self.source, self.options)
@@ -296,7 +323,13 @@ fn stream<B: Backend>(
         None
     };
     status.pending = frame.pending;
-    native.selected = frame.visible.into_iter().collect();
+    status.retained_tiles = frame.retained_tiles;
+    status.selection_complete = frame.selection_complete;
+    let selected = frame.visible.into_iter().collect();
+    if selected != native.selected || !frame.loaded.is_empty() {
+        status.stable_frames = 0;
+    }
+    native.selected = selected;
     for tile in frame.loaded {
         // Coalesce repeated updates, but keep the currently published version
         // alive until the replacement has completed GPU asset preparation.
@@ -460,6 +493,15 @@ fn publish<B: Backend>(
     }
     status.resident_tiles = native.tiles.len();
     status.visible_tiles = native.published.len();
+    if status.selection_complete
+        && !status.load_failed
+        && status.pending_render_tiles == 0
+        && status.visible_tiles > 0
+    {
+        status.stable_frames = status.stable_frames.saturating_add(1);
+    } else {
+        status.stable_frames = 0;
+    }
 }
 
 #[cfg(test)]
@@ -795,6 +837,44 @@ mod tests {
             app.world().resource::<CesiumViews>().0[0].position,
             [205., 0., 0.]
         );
+    }
+
+    #[test]
+    fn capture_waits_for_imagery_gpu_and_stable_publication() {
+        let mut app = controlled_app();
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        for _ in 0..12 {
+            app.world_mut()
+                .non_send_mut::<NativeSession<ControlledBackend>>()
+                .session
+                .next = Frame {
+                visible: vec![1],
+                selection_complete: true,
+                ..default()
+            };
+            app.update();
+            assert!(!app.world().resource::<CesiumStatus>().ready_for_capture());
+        }
+        acknowledge(&mut app, 1);
+        for i in 0..8 {
+            app.world_mut()
+                .non_send_mut::<NativeSession<ControlledBackend>>()
+                .session
+                .next = Frame {
+                visible: vec![1],
+                selection_complete: true,
+                ..default()
+            };
+            app.update();
+            assert_eq!(
+                app.world().resource::<CesiumStatus>().ready_for_capture(),
+                i == 7
+            );
+        }
+        // A new imagery revision resets readiness even if tile IDs are unchanged.
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        assert!(!app.world().resource::<CesiumStatus>().ready_for_capture());
+        assert_eq!(app.world().resource::<CesiumStatus>().stable_frames, 0);
     }
 
     struct NeverOpen;

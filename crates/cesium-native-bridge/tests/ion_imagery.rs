@@ -19,6 +19,7 @@ fn ion_terrain_receives_textured_replacements() {
         Ok("2")
     );
     let mut session = Session::open_ion(1, token.trim()).expect("Open ion terrain");
+    session.configure_retention(500.0).unwrap();
     let lat = 35.350664_f64.to_radians();
     let lon = (-117.809027_f64).to_radians();
     let n = 6_378_137.0 / (1.0 - 0.00669437999014 * lat.sin().powi(2)).sqrt();
@@ -41,7 +42,8 @@ fn ion_terrain_receives_textured_replacements() {
         vertical_fov: 0.9,
     };
     let mut seen = HashSet::new();
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut textured_replacement = false;
+    let deadline = Instant::now() + Duration::from_secs(120);
     while Instant::now() < deadline {
         let frame = session.update(&[view], 0.02).expect("Update ion terrain");
         assert!(!frame.load_failed, "Terrain or imagery failed to load");
@@ -57,11 +59,14 @@ fn ion_terrain_receives_textured_replacements() {
                     assert!(primitive.uvs.iter().all(|value| value.is_finite()));
                     assert!(primitive.normals.iter().all(|value| value.is_finite()));
                     assert_eq!(primitive.metallic, 0.0);
-                    return;
+                    textured_replacement = true;
                 }
             }
         }
+        if textured_replacement && frame.selection_complete && frame.retained_tiles > 0 {
+            return;
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("No textured terrain replacement arrived within 60 seconds");
+    panic!("Textured retained terrain did not complete within 120 seconds");
 }

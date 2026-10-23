@@ -126,6 +126,10 @@ fn missing_child_does_not_mark_a_renderable_tileset_unavailable() {
             visible_frames += 1;
         }
         if visible_frames >= 60 && server.missing.load(Ordering::Relaxed) > 0 {
+            assert!(
+                !frame.selection_complete,
+                "A missing child must block capture readiness"
+            );
             return;
         }
         std::thread::sleep(Duration::from_millis(10));
