@@ -85,6 +85,7 @@ can change. Identical pixels also require a controlled rendering environment.
 - [x] Keep the previous terrain visible until replacement geometry and textures
   are ready on the GPU.
 - [x] Retain acquired detail while any camera still needs the area, with a margin.
+- [x] Share retention selection work across tiles to avoid slowing down as detail accumulates.
 - [x] Support multiple cameras and preserve detail during gaps between captures.
 - [x] Support fixed reference views and signal when terrain is ready to capture.
 - [x] Test loading failures, detail retention and GPU transitions with local assets;
@@ -109,6 +110,11 @@ For a visual example with two views and terrain/texture swaps:
 CESIUM_STABILITY_OUTPUT=/tmp/terrain-stability \
   cargo run --release --example terrain_stability
 ```
+
+To measure terrain selection after loading, set `CESIUM_ION_TOKEN` and run
+`cargo run --release -p cesium-native-bridge --example retention_profile -- 500`.
+Compare with `100` and `0` meters. This measures CPU selection, not rendering FPS;
+zero disables detail retention.
 
 For custom coordinate systems such as Elodin's floating origin, use
 `.with_external_coordinates()`, supply `CesiumViews` in ECEF (Earth-centered,

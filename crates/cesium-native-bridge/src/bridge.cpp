@@ -64,12 +64,29 @@ public:
         });
       });
     }
+    if (tiles.empty()) return;
     auto measure = std::make_shared<RetainedMeasure>();
-    for (const auto& [tile, reference] : tiles)
+    glm::dvec3 minimum(std::numeric_limits<double>::max());
+    glm::dvec3 maximum(std::numeric_limits<double>::lowest());
+    for (const auto& [tile, reference] : tiles) {
       for (auto* parent = tile->getParent(); parent; parent = parent->getParent())
         measure->ancestors.insert(parent);
-    for (const auto& [tile, reference] : tiles)
-      views.emplace_back(tile->getBoundingVolume(), measure);
+      const auto box = getOrientedBoundingBoxFromBoundingVolume(tile->getBoundingVolume());
+      const auto axes = box.getHalfAxes();
+      const auto extent = glm::abs(axes[0]) + glm::abs(axes[1]) + glm::abs(axes[2]);
+      minimum = glm::min(minimum, box.getCenter() - extent);
+      maximum = glm::max(maximum, box.getCenter() + extent);
+    }
+    // Native tests every visited tile against every selection view. One view
+    // per retained tile turns this into a quadratic traversal. A single
+    // enclosing volume keeps the same forced ancestor paths at a bounded cost;
+    // unrelated paths still have a zero retention selection measure. The
+    // enclosure may also select coarse tiles in gaps between retained areas.
+    const auto center = (minimum + maximum) * 0.5;
+    const auto half = (maximum - minimum) * 0.5;
+    views.emplace_back(CesiumGeometry::OrientedBoundingBox(center, glm::dmat3(
+        glm::dvec3(half.x, 0.0, 0.0), glm::dvec3(0.0, half.y, 0.0),
+        glm::dvec3(0.0, 0.0, half.z))), measure);
   }
 
   void observe(const ViewUpdateResult& result, const std::vector<ViewState>& live) {

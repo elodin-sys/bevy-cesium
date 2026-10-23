@@ -31,11 +31,13 @@ impl Scene {
         Self::fixture(margin, "lod.json")
     }
     fn fixture(margin: f64, name: &str) -> Self {
-        let mut session = Session::open_url(&format!(
-            "file://{}/tests/data/{name}",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap();
+        Self::url(
+            margin,
+            &format!("file://{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR")),
+        )
+    }
+    fn url(margin: f64, url: &str) -> Self {
+        let mut session = Session::open_url(url).unwrap();
         session.configure(16., 0).unwrap();
         session.configure_retention(margin).unwrap();
         Self {
@@ -196,4 +198,90 @@ fn refinement_can_increase_again_without_retaining_broad_ancestors() {
     scene.session.configure_retention(0.).unwrap();
     let root = scene.wait(&[far()], 3);
     assert_ne!(root.visible, fine.visible);
+}
+
+#[test]
+fn many_retained_tiles_keep_their_detail_and_release_together() {
+    // Two distant grids exercise aggregation of distinct retention volumes. The original
+    // one-child fixtures cannot catch a dropped tile or growing retention set.
+    let directory =
+        std::env::temp_dir().join(format!("cesium-retention-grid-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(directory);
+    std::fs::write(
+        fixture.0.join("fine.gltf"),
+        include_str!("data/triangle.gltf"),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.0.join("coarse.gltf"),
+        include_str!("data/materials.gltf"),
+    )
+    .unwrap();
+    let mut children = Vec::new();
+    for x in 0..8 {
+        for y in 0..8 {
+            let x = (x % 4) * 100 - 150 + if x < 4 { -4000 } else { 4000 };
+            let y = y * 100 - 350;
+            children.push(format!(
+                r#"{{
+                "transform": [1,0,0,0,0,1,0,0,0,0,1,0,{x},{y},0,1],
+                "boundingVolume": {{"box": [5,-5,0,20,0,0,0,20,0,0,0,10]}},
+                "geometricError": 100, "content": {{"uri": "coarse.gltf"}},
+                "children": [{{
+                    "boundingVolume": {{"box": [5,-5,0,20,0,0,0,20,0,0,0,10]}},
+                    "geometricError": 0, "content": {{"uri": "fine.gltf"}}
+                }}]
+            }}"#
+            ));
+        }
+    }
+    let json = format!(
+        r#"{{"asset": {{"version": "1.1"}}, "geometricError": 1000000,
+        "root": {{
+            "boundingVolume": {{"box": [0,0,0,4500,0,0,0,400,0,0,0,10]}},
+            "transform": [0,1,0,0,0,0,1,0,1,0,0,0,6378137,0,0,1],
+            "geometricError": 1000000, "refine": "REPLACE", "children": [{}]
+        }} }}"#,
+        children.join(",")
+    );
+    let path = fixture.0.join("tileset.json");
+    std::fs::write(&path, json).unwrap();
+    let mut scene = Scene::url(500., &format!("file://{}", path.display()));
+    let left = View {
+        position: [6_379_137., -3995., -5.],
+        ..near()
+    };
+    let right = View {
+        position: [6_379_137., 4005., -5.],
+        ..near()
+    };
+    let fine = scene.wait(&[left, right], 64);
+    assert_eq!(fine.retained_tiles, 64);
+    for views in [&[far()][..], &[][..], &[far(), far()][..]] {
+        for _ in 0..100 {
+            let (frame, count) = scene.step(views);
+            assert_eq!(count, 64);
+            assert_eq!(frame.visible, fine.visible);
+            assert_eq!(frame.retained_tiles, 64);
+        }
+    }
+    let remaining = scene.wait(&[right], 32);
+    assert_eq!(remaining.retained_tiles, 32);
+    assert!(remaining.visible.iter().all(|id| fine.visible.contains(id)));
+    let away = View {
+        direction: [1., 0., 0.],
+        ..far()
+    };
+    let (released, _) = scene.step(&[away]);
+    assert_eq!(released.retained_tiles, 0);
+    // After leaving every view, the same distant camera may use coarse assets.
+    let coarse = scene.wait(&[far()], 64 * 3);
+    assert!(coarse.visible.iter().all(|id| !fine.visible.contains(id)));
 }
