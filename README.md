@@ -31,6 +31,7 @@ Your app supplies lighting and displays the source attribution from `CesiumCredi
 app.add_plugins(
     CesiumPlugin::new(source)
         .with_maximum_screen_error(16.0)
+        .with_initial_load_wait()
         .with_lod_retention_margin(500.0),
 );
 ```
@@ -41,6 +42,11 @@ with an extra margin in meters. Retention is off by default; this example enable
 
 ## Terrain stability
 
+- **Startup:** `.with_initial_load_wait()` keeps provisional terrain hidden until
+  the first selection and its images are loaded and ready on the GPU. Very coarse
+  terrain can otherwise pass above a low-flying camera. The app should show a
+  loading message and set a timeout. This wait applies only to the first load.
+  Extra coarser and neighboring tiles are not preloaded.
 - **Flickering:** downloaded terrain may still be waiting for the GPU. Bevy-Cesium
   keeps the old terrain visible until its replacement is ready, then swaps it in
   together. Texture updates follow the same rule, avoiding temporary holes and
@@ -52,10 +58,13 @@ with an extra margin in meters. Retention is off by default; this example enable
 - **Several cameras:** detail needed by any supplied camera is kept. A temporary
   gap with no cameras does not clear it.
 
-Elodin's RC-jet integration uses this library for both Editor and sensor views.
-It enables a **500 m margin** and **16 px screen error**, and keeps sensor camera
-requirements active between captured images. Elodin pins an exact Git revision
-of Bevy-Cesium so an upstream change cannot silently change its renderer.
+Elodin's RC-jet example enables a **500 m margin** and **16 px screen error**.
+Elodin pins an exact Git revision of Bevy-Cesium and shows a loading message
+until the initial terrain is ready. The simulation continues during loading.
+The color sensor is enabled. The zoomed infrared sensor is temporarily disabled
+in Cesium mode because it greatly increases initial loading time. Its panel stays
+visible without a stream; loading time, image quality and performance remain to be validated.
+Downloaded data is not yet cached on disk.
 
 ## Controlled captures
 
@@ -87,10 +96,14 @@ can change. Identical pixels also require a controlled rendering environment.
 - [x] Retain acquired detail while any camera still needs the area, with a margin.
 - [x] Share retention selection work across tiles to avoid slowing down as detail accumulates.
 - [x] Avoid slow per-byte copies when loading images.
+- [x] Wait for initial terrain and images before showing them; test startup locally.
 - [x] Support multiple cameras and preserve detail during gaps between captures.
 - [x] Support fixed reference views and signal when terrain is ready to capture.
 - [x] Test loading failures, detail retention and GPU transitions with local assets;
   validate the integration locally in RC-jet.
+- [x] Validate RC-jet's color sensor locally and keep it enabled.
+- [ ] Reduce loading time and validate image quality and performance of RC-jet's
+  infrared sensor, then enable it again in Cesium mode.
 - [ ] Cache downloaded terrain and imagery on disk for reuse between runs.
 - [ ] Save a complete terrain package for a chosen region and camera path,
   with a version and file checksums to verify its contents.

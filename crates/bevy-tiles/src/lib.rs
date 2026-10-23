@@ -116,6 +116,7 @@ struct NativeSession<B: Backend> {
     selected: HashSet<u64>,
     published: HashSet<u64>,
     removed: HashSet<u64>,
+    waiting_for_initial_load: bool,
 }
 
 pub struct TilesPlugin<B: Backend> {
@@ -123,6 +124,7 @@ pub struct TilesPlugin<B: Backend> {
     options: Options,
     source: CesiumSource,
     external_coordinates: bool,
+    wait_for_initial_load: bool,
 }
 impl<B: Backend> TilesPlugin<B> {
     pub fn new(source: CesiumSource) -> Self {
@@ -131,6 +133,7 @@ impl<B: Backend> TilesPlugin<B> {
             backend: PhantomData,
             options: Options::default(),
             external_coordinates: false,
+            wait_for_initial_load: false,
         }
     }
     pub fn with_unused_cache_bytes(mut self, bytes: usize) -> Self {
@@ -146,6 +149,15 @@ impl<B: Backend> TilesPlugin<B> {
     /// margin enables retention; zero restores ordinary dynamic selection.
     pub fn with_lod_retention_margin(mut self, meters: f64) -> Self {
         self.options.lod_retention_margin = meters;
+        self
+    }
+    /// Keep provisional terrain hidden until the first requested selection and
+    /// imagery are fully loaded and prepared on the GPU. Coarse terrain can
+    /// intersect a low-flying camera before its real elevation is available.
+    /// The host should show loading progress and enforce a timeout. Subsequent
+    /// updates keep the previous selection visible while replacements load.
+    pub fn with_initial_load_wait(mut self) -> Self {
+        self.wait_for_initial_load = true;
         self
     }
     /// Disable ordinary camera collection and local placement. The application
@@ -195,6 +207,7 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
                     selected: HashSet::new(),
                     published: HashSet::new(),
                     removed: HashSet::new(),
+                    waiting_for_initial_load: self.wait_for_initial_load,
                 })
                 .add_systems(Update, stream::<B>.in_set(CesiumSet::Stream))
                 .add_systems(Update, publish::<B>.in_set(CesiumSet::Publish));
@@ -455,8 +468,12 @@ fn publish<B: Backend>(
         .iter()
         .filter(|id| !native.tiles.contains_key(id) || native.replacements.contains_key(id))
         .count();
-    if status.pending_render_tiles == 0 {
+    if status.pending_render_tiles == 0
+        && (!native.waiting_for_initial_load
+            || (status.selection_complete && !status.load_failed && !native.selected.is_empty()))
+    {
         native.published = native.selected.clone();
+        native.waiting_for_initial_load = false;
     }
     let removed: Vec<_> = native
         .removed
@@ -630,15 +647,20 @@ mod tests {
         }
     }
     fn controlled_app() -> App {
+        controlled_app_with_startup_wait(false)
+    }
+    fn controlled_app_with_startup_wait(wait: bool) -> App {
         let mut app = App::new();
+        let mut plugin = TilesPlugin::<ControlledBackend>::new(CesiumSource::Url("fixture".into()))
+            .with_external_coordinates();
+        if wait {
+            plugin = plugin.with_initial_load_wait();
+        }
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<Image>()
             .init_asset::<StandardMaterial>()
-            .add_plugins(
-                TilesPlugin::<ControlledBackend>::new(CesiumSource::Url("fixture".into()))
-                    .with_external_coordinates(),
-            )
+            .add_plugins(plugin)
             .init_resource::<ReadyTiles>();
         app
     }
@@ -679,6 +701,43 @@ mod tests {
             .filter(|(_, v)| **v == Visibility::Visible)
             .map(|(e, _)| e)
             .collect()
+    }
+    #[test]
+    fn startup_wait_hides_coarse_terrain_until_complete_and_gpu_ready_only_once() {
+        let mut app = controlled_app_with_startup_wait(true);
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        acknowledge(&mut app, 1);
+        step(&mut app, vec![], vec![1], vec![]);
+        assert!(visible_entities(&mut app).is_empty());
+
+        step(&mut app, vec![packet(2), packet(3)], vec![2, 3], vec![1]);
+        let complete = |app: &mut App, failed| {
+            app.world_mut()
+                .non_send_mut::<NativeSession<ControlledBackend>>()
+                .session
+                .next = Frame {
+                visible: vec![2, 3],
+                selection_complete: true,
+                load_failed: failed,
+                ..default()
+            };
+            app.update();
+        };
+        acknowledge(&mut app, 2);
+        complete(&mut app, false);
+        assert!(visible_entities(&mut app).is_empty());
+        acknowledge(&mut app, 3);
+        complete(&mut app, true);
+        assert!(visible_entities(&mut app).is_empty());
+        complete(&mut app, false);
+        assert_eq!(visible_entities(&mut app).len(), 2);
+
+        // Continuing downloads during flight must not hide an initialized scene.
+        step(&mut app, vec![packet(4)], vec![4], vec![2, 3]);
+        assert_eq!(visible_entities(&mut app).len(), 2);
+        acknowledge(&mut app, 4);
+        step(&mut app, vec![], vec![4], vec![]);
+        assert_eq!(visible_entities(&mut app).len(), 1);
     }
     #[test]
     fn imagery_keeps_old_render_until_replacement_is_gpu_ready() {

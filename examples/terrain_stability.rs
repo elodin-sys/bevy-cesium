@@ -22,6 +22,7 @@ impl Backend for Fixture {
         let detailed = (tick / 240) % 2 == 1;
         let mut frame = Frame {
             visible: if detailed { vec![2, 3] } else { vec![1] },
+            selection_complete: tick >= 60,
             ..default()
         };
         if tick.is_multiple_of(240) {
@@ -88,9 +89,10 @@ fn main() {
         }))
         .insert_resource(ClearColor(Color::srgb(1., 0., 1.)))
         .insert_resource(RenderAssetBytesPerFrame::new(1024))
-        .add_plugins(TilesPlugin::<Fixture>::new(CesiumSource::Url(
-            "fixture".into(),
-        )))
+        .add_plugins(
+            TilesPlugin::<Fixture>::new(CesiumSource::Url("fixture".into()))
+                .with_initial_load_wait(),
+        )
         .add_systems(Startup, setup)
         .add_systems(Update, inspect.after(CesiumSet::Publish))
         .run();
@@ -129,7 +131,7 @@ fn inspect(mut commands: Commands, mut frame: Local<u64>, status: Res<CesiumStat
     }
     if let Ok(directory) = std::env::var("CESIUM_STABILITY_OUTPUT") {
         if [
-            110, 121, 122, 123, 130, 239, 241, 242, 243, 250, 370, 481, 482, 490,
+            30, 59, 65, 110, 121, 122, 123, 130, 239, 241, 242, 243, 250, 370, 481, 482, 490,
         ]
         .contains(&*frame)
         {

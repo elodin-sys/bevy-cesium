@@ -77,6 +77,22 @@ impl Scene {
     }
 }
 #[test]
+fn stationary_selection_stays_ready_under_cache_pressure() {
+    let mut scene = Scene::new(500.);
+    scene.wait(&[near()], 1);
+    for _ in 0..50 {
+        let (frame, count) = scene.step(&[near()]);
+        assert_eq!(count, 1);
+        assert!(
+            frame.selection_complete,
+            "unused preloads must not block readiness"
+        );
+        assert_eq!(frame.pending, 0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
 fn acquired_detail_survives_distance_cache_pressure_and_camera_gaps() {
     let mut scene = Scene::new(500.);
     scene.wait(&[near()], 1);
@@ -275,6 +291,16 @@ fn many_retained_tiles_keep_their_detail_and_release_together() {
     let remaining = scene.wait(&[right], 32);
     assert_eq!(remaining.retained_tiles, 32);
     assert!(remaining.visible.iter().all(|id| fine.visible.contains(id)));
+    for _ in 0..50 {
+        let (frame, count) = scene.step(&[right]);
+        assert_eq!(count, 32);
+        assert!(
+            frame.selection_complete,
+            "offscreen siblings must not keep reloading"
+        );
+        assert_eq!(frame.pending, 0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let away = View {
         direction: [1., 0., 0.],
         ..far()

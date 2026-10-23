@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <cstdlib>
+#include <cmath>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -89,7 +90,8 @@ public:
         glm::dvec3(0.0, 0.0, half.z))), measure);
   }
 
-  void observe(const ViewUpdateResult& result, const std::vector<ViewState>& live) {
+  void observe(const ViewUpdateResult& result, const std::vector<ViewState>& live,
+      double maximumScreenError) {
     if (margin <= 0.0) return;
     for (const auto& tile : result.tilesToRenderThisFrame) {
       const auto* content = tile->getContent().getRenderContent();
@@ -97,7 +99,14 @@ public:
       // Do not expand retention by recursively remembering tiles selected only
       // by retention views. Acquire detail only where real/reference cameras look.
       if (std::any_of(live.begin(), live.end(), [&](const ViewState& view) {
-            return view.isBoundingVolumeVisible(tile->getBoundingVolume());
+            if (!view.isBoundingVolumeVisible(tile->getBoundingVolume())) return false;
+            // A fine tile can be a temporary fallback while a newly requested
+            // coarse parent loads. Do not reacquire that released detail unless
+            // a real camera actually requires refinement of its parent.
+            const auto* parent = tile->getParent();
+            return !parent || view.computeScreenSpaceError(parent->getGeometricError(),
+                std::sqrt(view.computeDistanceSquaredToBoundingVolume(parent->getBoundingVolume())))
+                > maximumScreenError;
           }))
         tiles.try_emplace(tile.get(), tile);
     }
@@ -360,6 +369,10 @@ struct Session::Impl {
   std::shared_ptr<std::atomic<bool>> loadFailed = std::make_shared<std::atomic<bool>>(false);
   TilesetOptions options() {
     TilesetOptions options;
+    // Load the requested views first. Unused relatives can otherwise consume
+    // the cache and delay readiness for narrow-field sensor cameras.
+    options.preloadAncestors = false;
+    options.preloadSiblings = false;
     auto failed = loadFailed;
     // Native 0.65 calls this for root/ion failures, not failed child tiles.
     options.loadErrorCallback = [failed](const auto&) { failed->store(true); };
@@ -435,7 +448,7 @@ Frame Session::update(rust::Slice<const View> input, float seconds) {
   const auto live = views;
   impl->retention.appendViews(views);
   const auto& result = tileset.updateViewGroup(tileset.getDefaultViewGroup(), views, seconds);
-  impl->retention.observe(result, live);
+  impl->retention.observe(result, live, tileset.getOptions().maximumScreenSpaceError);
   tileset.loadTiles();
   Frame frame{};
   frame.loaded = std::move(impl->resources->loaded);
