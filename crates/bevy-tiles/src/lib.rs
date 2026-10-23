@@ -9,7 +9,10 @@ use bevy::{
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    transform::helper::TransformHelper,
 };
+mod readiness;
+use readiness::{ReadyTiles, TileAssets};
 mod contract;
 pub use contract::*;
 use std::collections::{HashMap, HashSet};
@@ -26,6 +29,22 @@ pub struct CesiumCamera;
 /// External adapters update this resource before CesiumSet::Stream.
 #[derive(Resource, Default)]
 pub struct CesiumViews(pub Vec<CesiumView>);
+
+/// Views whose detail requirements must remain selected even when live cameras
+/// move away. Populate with the full capture path before warming a CI scene.
+/// Remove views only once their terrain is outside the application's required
+/// region. This retains selection quality, not merely cached tile bytes.
+#[derive(Resource, Default)]
+pub struct CesiumDetailViews(pub Vec<CesiumView>);
+
+/// Fixed selection ignores live cameras so a preview camera cannot alter a
+/// capture's terrain requirements. Supply the complete path in CesiumDetailViews.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub enum CesiumSelectionMode {
+    #[default]
+    Live,
+    Fixed,
+}
 
 /// Transform from Earth-centered Earth-fixed coordinates to local Bevy space.
 /// Subtraction/rotation takes place in f64 before conversion to Bevy's f32.
@@ -57,6 +76,8 @@ pub struct CesiumStatus {
     pub load_failed: bool,
     pub resident_tiles: usize,
     pub visible_tiles: usize,
+    /// Requested visible tiles not yet published because GPU assets are pending.
+    pub pending_render_tiles: usize,
     /// Redacted diagnostic, suitable for host UI. No URLs or credentials.
     pub error: Option<&'static str>,
 }
@@ -66,11 +87,17 @@ pub enum CesiumSet {
     Views,
     Stream,
     Placement,
+    /// Publish visibility after the host has placed newly created entities.
+    Publish,
 }
 
 struct NativeSession<B: Backend> {
     session: B,
     tiles: HashMap<u64, Vec<Entity>>,
+    replacements: HashMap<u64, Vec<Entity>>,
+    selected: HashSet<u64>,
+    published: HashSet<u64>,
+    removed: HashSet<u64>,
 }
 
 pub struct TilesPlugin<B: Backend> {
@@ -105,13 +132,22 @@ impl<B: Backend> TilesPlugin<B> {
 }
 impl<B: Backend> Plugin for TilesPlugin<B> {
     fn build(&self, app: &mut App) {
+        readiness::install(app);
         app.init_resource::<CesiumViews>()
+            .init_resource::<CesiumDetailViews>()
+            .init_resource::<CesiumSelectionMode>()
             .init_resource::<CesiumCredits>()
             .init_resource::<CesiumStatus>()
             .init_resource::<CesiumGeoreference>()
             .configure_sets(
                 Update,
-                (CesiumSet::Views, CesiumSet::Stream, CesiumSet::Placement).chain(),
+                (
+                    CesiumSet::Views,
+                    CesiumSet::Stream,
+                    CesiumSet::Placement,
+                    CesiumSet::Publish,
+                )
+                    .chain(),
             );
         let result = if !self.source.valid() {
             Err(BackendError("Invalid source configuration"))
@@ -128,8 +164,13 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
                 app.insert_non_send(NativeSession {
                     session,
                     tiles: HashMap::new(),
+                    replacements: HashMap::new(),
+                    selected: HashSet::new(),
+                    published: HashSet::new(),
+                    removed: HashSet::new(),
                 })
-                .add_systems(Update, stream::<B>.in_set(CesiumSet::Stream));
+                .add_systems(Update, stream::<B>.in_set(CesiumSet::Stream))
+                .add_systems(Update, publish::<B>.in_set(CesiumSet::Publish));
                 if !self.external_coordinates {
                     app.add_systems(Update, collect_views.in_set(CesiumSet::Views))
                         .add_systems(Update, place_tiles.in_set(CesiumSet::Placement));
@@ -146,13 +187,19 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
 }
 
 fn collect_views(
-    cameras: Query<(&Camera, &Projection, &GlobalTransform), With<CesiumCamera>>,
+    cameras: Query<(Entity, &Camera, &Projection), With<CesiumCamera>>,
+    transforms: TransformHelper,
     geo: Res<CesiumGeoreference>,
     mut views: ResMut<CesiumViews>,
 ) {
     let ecef_from_world = geo.0.inverse();
     views.0.clear();
-    for (camera, projection, transform) in &cameras {
+    for (entity, camera, projection) in &cameras {
+        // Update precedes global transform propagation. Resolve the current
+        // local hierarchy rather than selecting LOD from last frame's pose.
+        let Ok(transform) = transforms.compute_global_transform(entity) else {
+            continue;
+        };
         if !camera.is_active {
             continue;
         }
@@ -211,15 +258,26 @@ fn stream<B: Backend>(
     mut commands: Commands,
     mut native: NonSendMut<NativeSession<B>>,
     views: Res<CesiumViews>,
+    detail_views: Res<CesiumDetailViews>,
+    selection_mode: Res<CesiumSelectionMode>,
     time: Res<Time>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    mut visibility: Query<&mut Visibility>,
     mut credits: ResMut<CesiumCredits>,
     mut status: ResMut<CesiumStatus>,
 ) {
-    let frame = match native.session.update(&views.0, time.delta_secs()) {
+    if *selection_mode == CesiumSelectionMode::Fixed && detail_views.0.is_empty() {
+        status.load_failed = true;
+        status.error = Some("Fixed terrain selection requires reference views");
+        return;
+    }
+    let selection_views: Vec<_> = if *selection_mode == CesiumSelectionMode::Fixed {
+        detail_views.0.clone()
+    } else {
+        views.0.iter().chain(&detail_views.0).copied().collect()
+    };
+    let frame = match native.session.update(&selection_views, time.delta_secs()) {
         Ok(frame) => frame,
         Err(error) => {
             status.load_failed = true;
@@ -238,10 +296,11 @@ fn stream<B: Backend>(
         None
     };
     status.pending = frame.pending;
-    status.visible_tiles = frame.visible.len();
+    native.selected = frame.visible.into_iter().collect();
     for tile in frame.loaded {
-        // An imagery attachment can replace an already resident tile.
-        if let Some(previous) = native.tiles.remove(&tile.id) {
+        // Coalesce repeated updates, but keep the currently published version
+        // alive until the replacement has completed GPU asset preparation.
+        if let Some(previous) = native.replacements.remove(&tile.id) {
             for entity in previous {
                 commands.entity(entity).despawn();
             }
@@ -300,11 +359,17 @@ fn stream<B: Backend>(
                 },
                 ..default()
             };
+            let mesh = meshes.add(mesh);
+            let material = materials.add(material);
             let entity = commands
                 .spawn((
                     Name::new("Cesium tile"),
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(materials.add(material)),
+                    TileAssets {
+                        mesh: mesh.id(),
+                        material: material.id(),
+                    },
+                    Mesh3d(mesh),
+                    MeshMaterial3d(material),
                     Transform::IDENTITY,
                     CesiumPrimitive {
                         ecef_from_mesh: matrix,
@@ -314,20 +379,71 @@ fn stream<B: Backend>(
                 .id();
             entities.push(entity);
         }
-        native.tiles.insert(tile.id, entities);
+        native.replacements.insert(tile.id, entities);
+        native.removed.remove(&tile.id);
     }
-    // A tile can finish loading and be evicted in the same update.
-    for id in frame.removed {
-        if let Some(entities) = native.tiles.remove(&id) {
+    native.removed.extend(frame.removed);
+}
+
+fn publish<B: Backend>(
+    mut commands: Commands,
+    mut native: NonSendMut<NativeSession<B>>,
+    ready: Option<Res<ReadyTiles>>,
+    mut visibility: Query<&mut Visibility>,
+    mut status: ResMut<CesiumStatus>,
+) {
+    let ready = ready
+        .as_ref()
+        .map(|r| r.0.lock().expect("tile readiness lock poisoned"));
+    let prepared = |entities: &[Entity]| {
+        ready
+            .as_ref()
+            .is_none_or(|set| entities.iter().all(|e| set.contains(e)))
+    };
+    // Promote imagery revisions atomically per tile. Never expose both revisions.
+    let completed: Vec<_> = native
+        .replacements
+        .iter()
+        .filter(|(_, entities)| prepared(entities))
+        .map(|(&id, _)| id)
+        .collect();
+    for id in completed {
+        let entities = native.replacements.remove(&id).unwrap();
+        if let Some(previous) = native.tiles.insert(id, entities) {
+            for entity in previous {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+    // Keep the entire previous selection while any new tile is not ready.
+    // Mixing a partial child set with its parent causes holes or z-fighting.
+    status.pending_render_tiles = native
+        .selected
+        .iter()
+        .filter(|id| !native.tiles.contains_key(id) || native.replacements.contains_key(id))
+        .count();
+    if status.pending_render_tiles == 0 {
+        native.published = native.selected.clone();
+    }
+    let removed: Vec<_> = native
+        .removed
+        .iter()
+        .filter(|id| !native.published.contains(id))
+        .copied()
+        .collect();
+    for id in removed {
+        native.removed.remove(&id);
+        for entities in [native.tiles.remove(&id), native.replacements.remove(&id)]
+            .into_iter()
+            .flatten()
+        {
             for entity in entities {
                 commands.entity(entity).despawn();
             }
         }
     }
-    status.resident_tiles = native.tiles.len();
-    let visible: HashSet<_> = frame.visible.into_iter().collect();
     for (id, entities) in &native.tiles {
-        let desired = if visible.contains(id) {
+        let desired = if native.published.contains(id) {
             Visibility::Visible
         } else {
             Visibility::Hidden
@@ -342,6 +458,8 @@ fn stream<B: Backend>(
             }
         }
     }
+    status.resident_tiles = native.tiles.len();
+    status.visible_tiles = native.published.len();
 }
 
 #[cfg(test)]
@@ -453,6 +571,230 @@ mod tests {
         app.update();
         assert!(app.world().get_entity(current).is_err());
         assert_eq!(app.world().resource::<CesiumStatus>().resident_tiles, 0);
+    }
+
+    #[derive(Default)]
+    struct ControlledBackend {
+        next: Frame,
+        views: Vec<CesiumView>,
+    }
+    impl Backend for ControlledBackend {
+        fn open(_: &CesiumSource, _: Options) -> Result<Self, BackendError> {
+            Ok(Self::default())
+        }
+        fn update(&mut self, views: &[CesiumView], _: f32) -> Result<Frame, BackendError> {
+            self.views = views.to_vec();
+            Ok(std::mem::take(&mut self.next))
+        }
+    }
+    fn controlled_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .add_plugins(
+                TilesPlugin::<ControlledBackend>::new(CesiumSource::Url("fixture".into()))
+                    .with_external_coordinates(),
+            )
+            .init_resource::<ReadyTiles>();
+        app
+    }
+    fn packet(id: u64) -> Tile {
+        let mut tile = ReplacingTile(0).update(&[], 0.).unwrap().loaded.remove(0);
+        tile.id = id;
+        tile
+    }
+    fn step(app: &mut App, loaded: Vec<Tile>, visible: Vec<u64>, removed: Vec<u64>) {
+        app.world_mut()
+            .non_send_mut::<NativeSession<ControlledBackend>>()
+            .session
+            .next = Frame {
+            loaded,
+            visible,
+            removed,
+            ..default()
+        };
+        app.update();
+    }
+    fn acknowledge(app: &mut App, id: u64) {
+        let entities = app
+            .world()
+            .non_send::<NativeSession<ControlledBackend>>()
+            .replacements[&id]
+            .clone();
+        app.world()
+            .resource::<ReadyTiles>()
+            .0
+            .lock()
+            .unwrap()
+            .extend(entities);
+    }
+    fn visible_entities(app: &mut App) -> Vec<Entity> {
+        app.world_mut()
+            .query_filtered::<(Entity, &Visibility), With<CesiumPrimitive>>()
+            .iter(app.world())
+            .filter(|(_, v)| **v == Visibility::Visible)
+            .map(|(e, _)| e)
+            .collect()
+    }
+    #[test]
+    fn imagery_keeps_old_render_until_replacement_is_gpu_ready() {
+        let mut app = controlled_app();
+        step(&mut app, vec![packet(42)], vec![42], vec![]);
+        assert!(visible_entities(&mut app).is_empty());
+        acknowledge(&mut app, 42);
+        step(&mut app, vec![], vec![42], vec![]);
+        let old = visible_entities(&mut app);
+        assert_eq!(old.len(), 1);
+        step(&mut app, vec![packet(42)], vec![42], vec![]);
+        assert_eq!(visible_entities(&mut app), old);
+        for _ in 0..5 {
+            step(&mut app, vec![], vec![42], vec![]);
+            assert_eq!(visible_entities(&mut app), old);
+            assert_eq!(
+                app.world().resource::<CesiumStatus>().pending_render_tiles,
+                1
+            );
+        }
+        acknowledge(&mut app, 42);
+        step(&mut app, vec![], vec![42], vec![]);
+        let new = visible_entities(&mut app);
+        assert_eq!(new.len(), 1);
+        assert_ne!(new, old);
+        assert!(app.world().get_entity(old[0]).is_err());
+    }
+    #[test]
+    fn lod_children_replace_parent_together_even_if_native_evicts_parent() {
+        let mut app = controlled_app();
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        acknowledge(&mut app, 1);
+        step(&mut app, vec![], vec![1], vec![]);
+        let parent = visible_entities(&mut app);
+        step(&mut app, vec![packet(2), packet(3)], vec![2, 3], vec![1]);
+        acknowledge(&mut app, 2);
+        step(&mut app, vec![], vec![2, 3], vec![]);
+        assert_eq!(visible_entities(&mut app), parent);
+        acknowledge(&mut app, 3);
+        step(&mut app, vec![], vec![2, 3], vec![]);
+        assert_eq!(visible_entities(&mut app).len(), 2);
+        assert!(app.world().get_entity(parent[0]).is_err());
+        step(&mut app, vec![], vec![], vec![2, 3]);
+        assert!(visible_entities(&mut app).is_empty());
+        assert_eq!(app.world().resource::<CesiumStatus>().resident_tiles, 0);
+    }
+    #[test]
+    fn superseded_and_evicted_pending_revisions_are_cleaned_up() {
+        let mut app = controlled_app();
+        step(&mut app, vec![packet(1), packet(1)], vec![1], vec![]);
+        assert_eq!(
+            app.world_mut()
+                .query::<&CesiumPrimitive>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        step(&mut app, vec![], vec![], vec![1]);
+        assert_eq!(
+            app.world_mut()
+                .query::<&CesiumPrimitive>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+    }
+    #[test]
+    fn detail_views_survive_live_camera_motion_until_explicit_release() {
+        let view = CesiumView {
+            position: [1., 2., 3.],
+            direction: [0., 0., -1.],
+            up: [0., 1., 0.],
+            width: 800.,
+            height: 600.,
+            horizontal_fov: 1.,
+            vertical_fov: 0.8,
+        };
+        let mut app = controlled_app();
+        app.world_mut()
+            .resource_mut::<CesiumDetailViews>()
+            .0
+            .push(view);
+        let mut live = view;
+        live.position = [100., 200., 300.];
+        app.world_mut().resource_mut::<CesiumViews>().0.push(live);
+        step(&mut app, vec![], vec![], vec![]);
+        let native = app.world().non_send::<NativeSession<ControlledBackend>>();
+        assert_eq!(native.session.views.len(), 2);
+        assert_eq!(native.session.views[1].position, view.position);
+        app.world_mut().resource_mut::<CesiumViews>().0[0].position = [900., 900., 900.];
+        step(&mut app, vec![], vec![], vec![]);
+        let native = app.world().non_send::<NativeSession<ControlledBackend>>();
+        assert_eq!(native.session.views[1].position, view.position);
+        *app.world_mut().resource_mut::<CesiumSelectionMode>() = CesiumSelectionMode::Fixed;
+        step(&mut app, vec![], vec![], vec![]);
+        let native = app.world().non_send::<NativeSession<ControlledBackend>>();
+        assert_eq!(native.session.views.len(), 1);
+        assert_eq!(native.session.views[0].position, view.position);
+        app.world_mut()
+            .resource_mut::<CesiumDetailViews>()
+            .0
+            .clear();
+        step(&mut app, vec![], vec![], vec![]);
+        assert_eq!(
+            app.world().resource::<CesiumStatus>().error,
+            Some("Fixed terrain selection requires reference views")
+        );
+        *app.world_mut().resource_mut::<CesiumSelectionMode>() = CesiumSelectionMode::Live;
+        step(&mut app, vec![], vec![], vec![]);
+        assert_eq!(
+            app.world()
+                .non_send::<NativeSession<ControlledBackend>>()
+                .session
+                .views[0]
+                .position,
+            [900., 900., 900.]
+        );
+        assert!(!app.world().resource::<CesiumStatus>().load_failed);
+    }
+
+    #[test]
+    fn camera_selection_uses_current_parent_pose_before_global_propagation() {
+        let mut app = App::new();
+        app.init_resource::<CesiumViews>()
+            .init_resource::<CesiumGeoreference>()
+            .add_systems(Update, collect_views);
+        let parent = app
+            .world_mut()
+            .spawn(Transform::from_xyz(100., 0., 0.))
+            .id();
+        app.world_mut().spawn((
+            CesiumCamera,
+            Camera {
+                viewport: Some(bevy::camera::Viewport {
+                    physical_size: UVec2::new(800, 600),
+                    ..default()
+                }),
+                ..default()
+            },
+            Projection::Perspective(PerspectiveProjection::default()),
+            Transform::from_xyz(5., 0., 0.),
+            ChildOf(parent),
+        ));
+        app.update();
+        assert_eq!(
+            app.world().resource::<CesiumViews>().0[0].position,
+            [105., 0., 0.]
+        );
+        app.world_mut()
+            .get_mut::<Transform>(parent)
+            .unwrap()
+            .translation
+            .x = 200.;
+        app.update();
+        assert_eq!(
+            app.world().resource::<CesiumViews>().0[0].position,
+            [205., 0., 0.]
+        );
     }
 
     struct NeverOpen;

@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 use bevy_tiles::{Backend, BackendError, Frame, Options, Primitive, Tile};
 pub use bevy_tiles::{
-    CesiumCamera, CesiumConfigError, CesiumCredits, CesiumGeoreference, CesiumPrimitive, CesiumSet,
-    CesiumSource, CesiumStatus, CesiumView, CesiumViews, GeographicImagery,
+    CesiumCamera, CesiumConfigError, CesiumCredits, CesiumDetailViews, CesiumGeoreference,
+    CesiumPrimitive, CesiumSelectionMode, CesiumSet, CesiumSource, CesiumStatus, CesiumView,
+    CesiumViews, GeographicImagery,
 };
 pub type CesiumPlugin = bevy_tiles::TilesPlugin<NativeBackend>;
 pub struct NativeBackend(cesium_native_bridge::Session);

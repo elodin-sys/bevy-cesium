@@ -94,6 +94,67 @@ CESIUM_ION_IMAGERY_ASSET_ID=2 cargo test --release -p cesium-native-bridge \
 
 Supply `CESIUM_ION_TOKEN` or `CESIUM_ION_TOKEN_FILE` for that test.
 
+## Stable terrain transitions and capture views
+
+The renderer publishes tile visibility in `CesiumSet::Publish`, after `Views →
+Stream → Placement`. Schedule camera movement before `Views`, external tile
+placement in `Placement`, and capture decisions after `Publish`. The ordinary
+camera adapter resolves the current transform hierarchy, including parent motion,
+instead of reading the previous frame's propagated transform.
+
+A CPU-loaded tile is not necessarily ready to draw. With a Bevy render app,
+new meshes/materials stay hidden until the render world acknowledges their
+prepared assets. The previous imagery revision stays alive during uploads.
+A new LOD selection is published only when all requested tiles are ready; a
+partial child set is not mixed with its old parent. Native eviction is deferred
+for a still-published fallback. ECS-only applications have no GPU readiness gate.
+`CesiumStatus::pending_render_tiles` reports the remaining publication work;
+`visible_tiles` counts the published selection. A failed replacement may keep
+old terrain visible; callers must also check load errors and enforce a timeout.
+
+The bridge deliberately keeps GPU readiness separate from Native's load queue.
+This is not a shader-pipeline warm-up guarantee or proof of complete imagery.
+An application requiring pixel comparisons must also warm its camera pipelines,
+wait for imagery, and use fixed inputs and a controlled rendering environment.
+
+For interactive exploration, put the views needed by the simulation's cameras
+in `CesiumDetailViews`. These views remain part of tile selection after live
+cameras move away, preserving their detail requirements rather than just cached
+bytes. The host removes a retained view only after its coverage is safely outside
+all required camera regions (use a spatial margin/hysteresis). Retained views can
+increase CPU/GPU memory use and are not subject to the unused-tile cache budget.
+
+For a fixed capture path, populate all reference views before loading and select
+`CesiumSelectionMode::Fixed`. Live preview cameras are then excluded from LOD
+selection. An empty fixed view list produces an explicit error. Each reference
+view includes its ECEF pose, physical viewport size and FOV; keep those and the
+screen-error threshold fixed. This mode does not freeze asynchronous loading,
+create an offline package, or make network-fetched inputs reproducible. CI still
+needs versioned tiles/imagery and explicit completion/error checks.
+
+```rust,ignore
+app.insert_resource(CesiumDetailViews(reference_camera_path))
+    .insert_resource(CesiumSelectionMode::Fixed);
+```
+
+The offline regression scene exercises same-ID imagery updates, parent/child
+replacement and two explicitly ordered camera viewports under a 1 KiB/frame
+asset-upload budget. It uses generated local geometry and no ion credentials:
+
+```sh
+nix develop
+cargo run --example terrain_stability
+# Optional: save transition frames and exit automatically.
+mkdir -p /tmp/terrain-stability
+CESIUM_STABILITY_OUTPUT=/tmp/terrain-stability cargo run --example terrain_stability
+```
+
+Magenta is the background; it must not flash through the terrain during a
+transition. Colors intentionally change between imagery revisions and LODs.
+The unit tests additionally delay GPU acknowledgements for several frames and
+check that old tiles survive, children appear together, and obsolete revisions
+are removed. The existing native tests continue to use local file fixtures.
+
 ## Usage examples
 
 ### Integration into Elodin Editor

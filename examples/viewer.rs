@@ -45,7 +45,8 @@ fn main() {
         .insert_resource(CesiumGeoreference(ecef_from_world.inverse()))
         .add_plugins(CesiumPlugin::new(source))
         .add_systems(Startup, setup)
-        .add_systems(Update, (orbit, credits, screenshot))
+        .add_systems(Update, orbit.before(CesiumSet::Views))
+        .add_systems(Update, (credits, screenshot).after(CesiumSet::Publish))
         .run();
 }
 fn number(name: &str, default: f64) -> f64 {
@@ -125,6 +126,9 @@ fn screenshot(
     if !*done
         && time.elapsed_secs() > 15.0
         && status.visible_tiles > 0
+        && !status.load_failed
+        && status.pending == 0
+        && status.pending_render_tiles == 0
         && let Ok(path) = std::env::var("CESIUM_SCREENSHOT")
     {
         *done = true;
