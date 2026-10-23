@@ -79,8 +79,16 @@ must cover the intended flight and sensors.
 **Repeatable CI (automated tests) still needs fixed input data.** Online ion data
 can change. Identical pixels also require a controlled rendering environment.
 
-## Next steps
+## Progress
 
+- [x] Stream terrain, aerial imagery and 3D Tiles into Bevy.
+- [x] Keep the previous terrain visible until replacement geometry and textures
+  are ready on the GPU.
+- [x] Retain acquired detail while any camera still needs the area, with a margin.
+- [x] Support multiple cameras and preserve detail during gaps between captures.
+- [x] Support fixed reference views and signal when terrain is ready to capture.
+- [x] Test loading failures, detail retention and GPU transitions with local assets;
+  validate the integration locally in RC-jet.
 - [ ] Cache downloaded terrain and imagery on disk for reuse between runs.
 - [ ] Save a complete terrain package for a chosen region and camera path,
   with a version and file checksums to verify its contents.
