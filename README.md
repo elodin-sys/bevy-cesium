@@ -86,6 +86,7 @@ can change. Identical pixels also require a controlled rendering environment.
   are ready on the GPU.
 - [x] Retain acquired detail while any camera still needs the area, with a margin.
 - [x] Share retention selection work across tiles to avoid slowing down as detail accumulates.
+- [x] Avoid slow per-byte copies when loading images.
 - [x] Support multiple cameras and preserve detail during gaps between captures.
 - [x] Support fixed reference views and signal when terrain is ready to capture.
 - [x] Test loading failures, detail retention and GPU transitions with local assets;

@@ -3,6 +3,12 @@
 
 pub use ffi::{Frame, Primitive, Tile, View};
 
+// Copy a complete image in one bridge call instead of pushing every byte
+// through CXX. The returned buffer owns its data independently of Native.
+fn copy_pixels(pixels: &[u8]) -> Vec<u8> {
+    pixels.to_vec()
+}
+
 /// A native session confined to its creating thread. No native pointers escape.
 pub struct Session(cxx::UniquePtr<ffi::Session>);
 
@@ -74,6 +80,10 @@ fn valid_view(v: &View) -> bool {
 
 #[cxx::bridge(namespace = "cesium_bridge")]
 mod ffi {
+    extern "Rust" {
+        fn copy_pixels(pixels: &[u8]) -> Vec<u8>;
+    }
+
     #[derive(Clone, Copy)]
     struct View {
         position: [f64; 3],

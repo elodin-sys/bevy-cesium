@@ -255,22 +255,10 @@ Tile extract(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
           auto source = gltf.textures[pbr.baseColorTexture->index].source;
           if (source >= 0 && size_t(source) < gltf.images.size()) {
             auto image = gltf.images[source].pAsset;
-            if (image && image->width > 0 && image->height > 0 &&
-                image->bytesPerChannel == 1 && image->channels >= 1 && image->channels <= 4 &&
-                image->compressedPixelFormat == CesiumImage::GpuCompressedPixelFormat::NONE) {
-              auto pixels = size_t(image->width) * size_t(image->height);
-              if (image->pixelData.size() >= pixels * image->channels) {
-                p.width = image->width; p.height = image->height;
-                p.pixels.reserve(pixels * 4);
-                for (size_t i = 0; i < pixels; ++i) {
-                  auto read = [&](int c) { return uint8_t(image->pixelData[i * image->channels + c]); };
-                  bool gray = image->channels < 3;
-                  p.pixels.push_back(read(0));
-                  p.pixels.push_back(read(gray ? 0 : 1));
-                  p.pixels.push_back(read(gray ? 0 : 2));
-                  p.pixels.push_back(image->channels == 2 ? read(1) : image->channels == 4 ? read(3) : 255);
-                }
-              }
+            if (image) {
+              const auto decoded = extractRaster(*image);
+              p.width = decoded.width; p.height = decoded.height;
+              p.pixels = copy_pixels(rust::Slice<const uint8_t>(decoded.pixels.data(), decoded.pixels.size()));
             }
           }
         }
@@ -280,9 +268,7 @@ Tile extract(const CesiumGltf::Model& model, const glm::dmat4& tileTransform,
       p.base_color = {1.f, 1.f, 1.f, 1.f};
       p.metallic = 0.f; p.roughness = 1.f;
       p.width = raster->width; p.height = raster->height;
-      p.pixels.clear();
-      p.pixels.reserve(raster->pixels.size());
-      for (auto pixel : raster->pixels) p.pixels.push_back(pixel);
+      p.pixels = copy_pixels(rust::Slice<const uint8_t>(raster->pixels.data(), raster->pixels.size()));
     }
     output.primitives.push_back(std::move(p));
   });
