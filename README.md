@@ -89,6 +89,11 @@ in Cesium mode because it greatly increases initial loading time. Its panel stay
 visible without a stream; loading time, image quality and performance remain to be validated.
 Downloaded data is not yet cached on disk.
 
+Rendering terrain does not add ground contact to the simulation. An aircraft
+flying below the surface sees the undersides and vertical edges of tiles.
+RC-jet's Cesium demo heads toward the valley. Terrain-aware ground contact is
+still on the checklist.
+
 ## Controlled captures
 
 For a known camera path, supply all reference views before loading:
