@@ -100,7 +100,27 @@ use these heights for its own contact model. Elodin RC-jet prepares a fixed heig
 grid before the flight, resolves ground contact and continues the simulation.
 Its grid is an approximation; it is not a collision mesh or an aircraft damage model.
 
+### Why RC-jet can bounce
+
+Elodin uses a simple spring-and-damper contact model: the ground pushes the aircraft
+out, while damping reduces motion into the surface. After each physics step,
+Elodin also lifts any penetrating reference point above the ground and removes
+velocity into the slope. The aircraft keeps moving, so it can bounce or slide
+along hills. This is a simplified contact response, not a realistic crash model.
+
+The onboard camera crossing the ground is a separate limitation. Physics uses
+heights sampled every 10 m and estimates the surface between them. The visible
+terrain uses meshes whose detail changes with LOD. Those surfaces can differ,
+and contact protects the aircraft's reference point, not its entire shape or
+the camera mounted ahead of it. Near the ground, the camera may therefore enter
+the visible mesh and show its underside. Full airframe and camera collision
+handling remains to be added in Elodin.
+
 ### Infrared remains disabled
+
+**Next planned task: make RC-jet's infrared camera usable with Cesium terrain.**
+It should show estimated heat contrast, while the color camera shows visible light.
+The infrared panel stays visible without a stream until this work is validated.
 
 The RC-jet integration has several separate costs to investigate:
 
@@ -114,7 +134,16 @@ The RC-jet integration has several separate costs to investigate:
 - Cesium imagery is not thermal data. Elodin currently estimates untagged terrain
   temperature from lighting; infrared contrast needs its own validation.
 
-Measure loading, GPU work, transfers and recording separately before enabling it.
+The work is planned in this order:
+
+1. Measure terrain loading, rendering, GPU-to-CPU transfers and recording separately.
+2. Set a sustainable frame rate and recording format; prevent infrared startup
+   from holding up the color stream.
+3. Check heat contrast on terrain and a tagged target, then test both cameras
+   together during a long flight before enabling infrared by default.
+
+Bevy-Cesium supplies terrain and shared detail selection; Elodin owns the sensor,
+heat approximation, frame scheduling and recording.
 The 500 m retention benchmark stayed below 1 ms at the 95th percentile for CPU
 selection in the tested route; that does not measure sensor rendering cost.
 
@@ -156,8 +185,8 @@ can change. Identical pixels also require a controlled rendering environment.
 - [x] Test loading failures, detail retention and GPU transitions with local assets;
   validate the integration locally in RC-jet.
 - [x] Validate RC-jet's color sensor locally and keep it enabled.
-- [ ] Reduce loading time and validate image quality and performance of RC-jet's
-  infrared sensor, then enable it again in Cesium mode.
+- [ ] **Next:** measure and reduce infrared costs, validate heat contrast and both
+  camera streams, then enable infrared again in Cesium mode.
 - [ ] Validate full airframe contact and low-mounted cameras against collision meshes;
   the current height grid can differ from visible terrain near the surface.
 - [ ] Cache downloaded terrain and imagery on disk for reuse between runs.
