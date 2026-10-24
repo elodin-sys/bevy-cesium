@@ -1,6 +1,6 @@
 //! Opt-in CPU timing for the RC-jet terrain selector; no rendering or network timing.
 //! CESIUM_ION_TOKEN must be set. Pass the retention margin in meters as argument 1.
-use cesium_native_bridge::{Frame, Session, View};
+use bevy_cesium::native::{Frame, Session, View};
 use std::time::{Duration, Instant};
 
 fn warm(session: &mut Session, views: &[View]) -> Frame {

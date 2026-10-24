@@ -57,7 +57,7 @@ fn ecef_cameras_stream_and_place_tiles_across_origin_changes() {
         .init_asset::<StandardMaterial>()
         .insert_resource(CesiumGeoreference(frame))
         .add_plugins(CesiumPlugin::new(CesiumSource::Url(format!(
-            "file://{}/crates/cesium-native-bridge/tests/data/tileset.json",
+            "file://{}/tests/data/tileset.json",
             env!("CARGO_MANIFEST_DIR")
         ))));
     let positions = [

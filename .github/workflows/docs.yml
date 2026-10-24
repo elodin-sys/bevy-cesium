@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "crates/bevy-tiles/**"
-      - "crates/cesium-native-bridge/**"
+      - "native/**"
+      - "build.rs"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -38,9 +38,16 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.98.0
           DOCS_RS: "1"
+          RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --no-deps --locked
       - name: Landing page
         run: printf '%s\n' '<!DOCTYPE html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=bevy_cesium/"><link rel="canonical" href="bevy_cesium/"><title>Bevy-Cesium</title><p><a href="bevy_cesium/">Bevy-Cesium API</a></p>' > target/doc/index.html
+      - name: Redirect former crate documentation
+        run: |
+          for crate in bevy_tiles cesium_native_bridge; do
+            mkdir -p "target/doc/$crate"
+            printf '%s\n' '<!DOCTYPE html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=../bevy_cesium/"><title>Bevy-Cesium</title><p><a href="../bevy_cesium/">Bevy-Cesium API</a></p>' > "target/doc/$crate/index.html"
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
           path: target/doc

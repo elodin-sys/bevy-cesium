@@ -49,7 +49,7 @@ fn reference_view_keeps_fine_lod_when_live_camera_moves_away() {
         .insert_resource(CesiumDetailViews(vec![near]))
         .add_plugins(
             CesiumPlugin::new(CesiumSource::Url(format!(
-                "file://{}/crates/cesium-native-bridge/tests/data/lod.json",
+                "file://{}/tests/data/lod.json",
                 env!("CARGO_MANIFEST_DIR")
             )))
             .with_external_coordinates(),

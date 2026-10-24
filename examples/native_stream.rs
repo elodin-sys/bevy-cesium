@@ -1,5 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use cesium_native_bridge::{Session, View};
+    use bevy_cesium::native::{Session, View};
     let url = std::env::args().nth(1).unwrap_or_else(|| {
         "https://3d.geo.admin.ch/ch.swisstopo.swissbuildings3d.3d/v1/tileset.json".into()
     });

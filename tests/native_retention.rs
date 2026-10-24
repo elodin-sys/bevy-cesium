@@ -1,5 +1,5 @@
 //! Offline regressions against the real selector, with an intentionally zero-byte cache.
-use cesium_native_bridge::{Frame, Session, Tile, View};
+use bevy_cesium::native::{Frame, Session, Tile, View};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},

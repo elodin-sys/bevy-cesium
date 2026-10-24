@@ -1,4 +1,4 @@
-use cesium_native_bridge::{Session, View};
+use bevy_cesium::native::{Session, View};
 use std::{
     sync::Barrier,
     time::{Duration, Instant},

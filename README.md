@@ -6,22 +6,24 @@ Cesium Native downloads and selects the data; Bevy renders it locally.
 Built for **Bevy 0.19** and **Cesium Native 0.65.0**. Experimental,
 maintained by Elodin independently of Cesium. Tested locally on Apple Silicon macOS.
 
+[API reference](https://elodin-sys.github.io/bevy-cesium/bevy_cesium/)
+· [Examples](examples)
+
 ## Structure
 
-The three Rust crates live in this repository. Applications depend on
-`bevy-cesium`; the other two are internal building blocks.
-`bevy-tiles` is our existing shared renderer, also used by Caevy.
+One Rust crate: `bevy-cesium`. Three internal parts:
 
 ```mermaid
-flowchart TD
-    app["Your Bevy app / Elodin"] --> plugin["bevy-cesium<br/>Plugin and Cesium backend"]
-    plugin --> renderer["bevy-tiles<br/>Bevy meshes, materials and visibility"]
-    plugin --> bridge["cesium-native-bridge<br/>Rust interface to C++"]
-    bridge --> native["Cesium Native<br/>Selects, downloads and decodes terrain"]
+flowchart LR
+    app["Your app / Elodin"] --> plugin
+    subgraph crate["bevy-cesium"]
+      plugin["Plugin<br/>App configuration"] --> renderer["Renderer<br/>Bevy meshes and materials"]
+      plugin --> bridge["Native bridge<br/>Rust ↔ C++"]
+    end
+    bridge --> native["Cesium Native<br/>Select, download, decode"]
 ```
 
-Install from GitHub using a pinned commit or tag. These crates are not published
-to crates.io.
+Use a pinned Git commit or release tag. The crate is not published to crates.io.
 
 ## Demo
 
@@ -122,6 +124,8 @@ can change. Identical pixels also require a controlled rendering environment.
 
 ## Progress
 
+- [x] Provide one crate and one API reference, with separate internal modules.
+
 - [x] Stream terrain, aerial imagery and 3D Tiles into Bevy.
 - [x] Keep the previous terrain visible until replacement geometry and textures
   are ready on the GPU.
@@ -158,7 +162,7 @@ CESIUM_STABILITY_OUTPUT=/tmp/terrain-stability \
 ```
 
 To measure terrain selection after loading, set `CESIUM_ION_TOKEN` and run
-`cargo run --release -p cesium-native-bridge --example retention_profile -- 500`.
+`cargo run --release --example retention_profile -- 500`.
 Compare with `100` and `0` meters. This measures CPU selection, not rendering FPS;
 zero disables detail retention.
 

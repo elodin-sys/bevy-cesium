@@ -1,4 +1,4 @@
-#include "cesium-native-bridge/src/lib.rs.h"
+#include "bevy-cesium/src/native.rs.h"
 #include <Cesium3DTilesContent/registerAllTileContentTypes.h>
 #include <Cesium3DTilesSelection/IPrepareRendererResources.h>
 #include <Cesium3DTilesSelection/Tileset.h>

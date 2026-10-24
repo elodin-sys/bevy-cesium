@@ -1,4 +1,4 @@
-use cesium_native_bridge::{CartographicPosition, Session};
+use bevy_cesium::native::{CartographicPosition, Session};
 use std::time::Duration;
 
 #[test]

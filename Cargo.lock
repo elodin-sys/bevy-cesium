@@ -344,18 +344,11 @@ dependencies = [
 
 [[package]]
 name = "bevy-cesium"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bevy",
- "bevy-tiles",
- "cesium-native-bridge",
-]
-
-[[package]]
-name = "bevy-tiles"
-version = "0.2.1"
-dependencies = [
- "bevy",
+ "cxx",
+ "cxx-build",
 ]
 
 [[package]]
@@ -1594,14 +1587,6 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
-]
-
-[[package]]
-name = "cesium-native-bridge"
-version = "0.1.1"
-dependencies = [
- "cxx",
- "cxx-build",
 ]
 
 [[package]]

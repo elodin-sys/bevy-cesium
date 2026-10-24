@@ -1,5 +1,5 @@
 //! Optional live smoke test; ordinary CI remains independent of ion credentials.
-use cesium_native_bridge::{Session, View};
+use bevy_cesium::native::{Session, View};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 

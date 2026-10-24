@@ -12,10 +12,10 @@ fn main() {
                 .is_file(),
             "Build Cesium Native with scripts/build_cesium_native.sh in bevy-cesium, or set CESIUM_NATIVE_DIR to an existing 0.65 installation."
         );
-        let mut bridge = cxx_build::bridge("src/lib.rs");
+        let mut bridge = cxx_build::bridge("src/native.rs");
         bridge
-            .file("src/bridge.cpp")
-            .include("include")
+            .file("native/bridge.cpp")
+            .include("native/include")
             .include(root.join("include"))
             // The supported SDK is built in Release mode. This must match:
             // Cesium's ReferenceCounted layout changes when NDEBUG is absent.
@@ -35,7 +35,7 @@ fn main() {
         }
         bridge.compile("cesium-bridge");
         println!("cargo:rerun-if-changed=src");
-        println!("cargo:rerun-if-changed=include");
+        println!("cargo:rerun-if-changed=native");
         println!(
             "cargo:rustc-link-search=native={}",
             root.join("lib").display()

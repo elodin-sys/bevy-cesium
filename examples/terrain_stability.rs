@@ -9,7 +9,7 @@ use bevy::{
         view::screenshot::{Screenshot, save_to_disk},
     },
 };
-use bevy_tiles::*;
+use bevy_cesium::*;
 
 struct Fixture(u64);
 impl Backend for Fixture {

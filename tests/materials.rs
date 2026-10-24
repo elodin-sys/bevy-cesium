@@ -11,7 +11,7 @@ fn gltf_material_modes_reach_bevy_without_changing_defaults() {
         .init_asset::<StandardMaterial>()
         .add_plugins(
             CesiumPlugin::new(CesiumSource::Url(format!(
-                "file://{}/crates/cesium-native-bridge/tests/data/materials.json",
+                "file://{}/tests/data/materials.json",
                 env!("CARGO_MANIFEST_DIR")
             )))
             .with_external_coordinates(),

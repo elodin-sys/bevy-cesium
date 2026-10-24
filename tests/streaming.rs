@@ -11,7 +11,7 @@ fn standalone_bevy_streams_a_fixture_without_elodin_or_gpu() {
         .init_asset::<StandardMaterial>()
         .add_plugins(
             CesiumPlugin::new(CesiumSource::Url(format!(
-                "file://{}/crates/cesium-native-bridge/tests/data/tileset.json",
+                "file://{}/tests/data/tileset.json",
                 env!("CARGO_MANIFEST_DIR")
             )))
             .with_external_coordinates(),
