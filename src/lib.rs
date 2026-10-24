@@ -19,6 +19,27 @@
 //! for setup and the remaining work. The lower-level `bevy_tiles` crate provides
 //! the shared rendering contract; applications normally use this crate.
 #![forbid(unsafe_code)]
+pub use cesium_native_bridge::{CartographicPosition, Error as TerrainQueryError};
+
+/// Terrain heights for simulation, sampled before the simulation starts.
+/// Uses the most detailed source data, independently of the renderer's LOD.
+/// Heights are meters above the WGS84 ellipsoid, not mean sea level.
+pub struct TerrainSampler(cesium_native_bridge::Session);
+impl TerrainSampler {
+    /// Open ion terrain without downloading aerial imagery.
+    pub fn from_ion(asset_id: i64, token: &str) -> Result<Self, TerrainQueryError> {
+        cesium_native_bridge::Session::open_terrain_ion(asset_id, token).map(Self)
+    }
+    /// Blocking query with a timeout. Fails if any position has no height.
+    pub fn sample_heights(
+        &mut self,
+        positions: &[CartographicPosition],
+        timeout: std::time::Duration,
+    ) -> Result<Vec<f64>, TerrainQueryError> {
+        self.0.sample_heights(positions, timeout)
+    }
+}
+
 use bevy_tiles::{Backend, BackendError, Frame, Options, Primitive, Tile};
 #[doc(inline)]
 pub use bevy_tiles::{

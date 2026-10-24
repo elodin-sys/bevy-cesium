@@ -1,7 +1,7 @@
 //! Narrow, owned-data boundary to Cesium Native. No native pointers escape.
 //! The session stays on its creating thread; Cesium owns its worker pool.
 
-pub use ffi::{Frame, Primitive, Tile, View};
+pub use ffi::{CartographicPosition, Frame, Primitive, Tile, View};
 
 // Copy a complete image in one bridge call instead of pushing every byte
 // through CXX. The returned buffer owns its data independently of Native.
@@ -31,6 +31,36 @@ impl Session {
         }
         ffi::open_ion(asset_id, token).map(Self).map_err(|_| Error)
     }
+    /// Open a terrain-only session, without the optional imagery overlay.
+    pub fn open_terrain_ion(asset_id: i64, token: &str) -> Result<Self, Error> {
+        if asset_id <= 0 || token.is_empty() {
+            return Err(Error);
+        }
+        ffi::open_terrain_ion(asset_id, token)
+            .map(Self)
+            .map_err(|_| Error)
+    }
+    /// Sample the most detailed surface, independently of rendering views.
+    /// Returns WGS84 ellipsoid heights in meters; any missing sample is an error.
+    /// This blocks the calling thread and must be used before the simulation starts.
+    pub fn sample_heights(
+        &mut self,
+        positions: &[CartographicPosition],
+        timeout: std::time::Duration,
+    ) -> Result<Vec<f64>, Error> {
+        if positions.is_empty()
+            || positions.len() > 1_000_000
+            || timeout.is_zero()
+            || timeout > std::time::Duration::from_secs(3600)
+            || positions.iter().any(|p| !valid_position(p))
+        {
+            return Err(Error);
+        }
+        self.0
+            .pin_mut()
+            .sample_heights(positions, timeout.as_millis().max(1) as u64)
+            .map_err(|_| Error)
+    }
     pub fn configure(&mut self, error: f64, cache_bytes: u64) -> Result<(), Error> {
         if !error.is_finite() || error <= 0.0 || cache_bytes > i64::MAX as u64 {
             return Err(Error);
@@ -53,6 +83,12 @@ impl Session {
         }
         self.0.pin_mut().update(views, seconds).map_err(|_| Error)
     }
+}
+fn valid_position(p: &CartographicPosition) -> bool {
+    p.longitude_radians.is_finite()
+        && p.latitude_radians.is_finite()
+        && p.longitude_radians.abs() <= std::f64::consts::PI
+        && p.latitude_radians.abs() <= std::f64::consts::FRAC_PI_2
 }
 fn valid_view(v: &View) -> bool {
     let length = |a: [f64; 3]| a.iter().map(|x| x * x).sum::<f64>();
@@ -82,6 +118,13 @@ fn valid_view(v: &View) -> bool {
 mod ffi {
     extern "Rust" {
         fn copy_pixels(pixels: &[u8]) -> Vec<u8>;
+    }
+
+    /// Longitude and latitude in radians on the WGS84 ellipsoid.
+    #[derive(Clone, Copy, Debug)]
+    struct CartographicPosition {
+        longitude_radians: f64,
+        latitude_radians: f64,
     }
 
     #[derive(Clone, Copy)]
@@ -140,6 +183,12 @@ mod ffi {
         type Session;
         fn open_url(url: &str) -> Result<UniquePtr<Session>>;
         fn open_ion(asset_id: i64, token: &str) -> Result<UniquePtr<Session>>;
+        fn open_terrain_ion(asset_id: i64, token: &str) -> Result<UniquePtr<Session>>;
+        fn sample_heights(
+            self: Pin<&mut Session>,
+            positions: &[CartographicPosition],
+            timeout_millis: u64,
+        ) -> Result<Vec<f64>>;
         fn configure(self: Pin<&mut Session>, error: f64, cache_bytes: u64);
         fn configure_retention(self: Pin<&mut Session>, margin_meters: f64);
         fn update(self: Pin<&mut Session>, views: &[View], seconds: f32) -> Result<Frame>;

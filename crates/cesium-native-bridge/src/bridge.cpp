@@ -406,10 +406,10 @@ Session::Session(rust::Str url) : impl(std::make_unique<Impl>()) {
   impl->tileset = std::make_unique<Tileset>(impl->externals(), std::string(url), impl->options());
   impl->observeRootFailure();
 }
-Session::Session(int64_t asset, rust::Str token) : impl(std::make_unique<Impl>()) {
+Session::Session(int64_t asset, rust::Str token, bool imagery) : impl(std::make_unique<Impl>()) {
   registerContentTypes();
   impl->tileset = std::make_unique<Tileset>(impl->externals(), asset, std::string(token), impl->options());
-  if (const auto* value = std::getenv("CESIUM_ION_IMAGERY_ASSET_ID")) {
+  if (const auto* value = imagery ? std::getenv("CESIUM_ION_IMAGERY_ASSET_ID") : nullptr) {
     const std::string text(value);
     int64_t imagery = 0;
     const auto parsed = std::from_chars(text.data(), text.data() + text.size(), imagery);
@@ -435,6 +435,37 @@ void Session::configure_retention(double marginMeters) {
 }
 std::unique_ptr<Session> open_url(rust::Str url) { return std::make_unique<Session>(url); }
 std::unique_ptr<Session> open_ion(int64_t asset, rust::Str token) { return std::make_unique<Session>(asset, token); }
+std::unique_ptr<Session> open_terrain_ion(int64_t asset, rust::Str token) { return std::make_unique<Session>(asset, token, false); }
+rust::Vec<double> Session::sample_heights(rust::Slice<const CartographicPosition> input, uint64_t timeoutMillis) {
+  std::vector<CesiumGeospatial::Cartographic> positions;
+  positions.reserve(input.size());
+  for (const auto& p : input)
+    positions.emplace_back(p.longitude_radians, p.latitude_radians, 0.0);
+  auto future = impl->tileset->sampleHeightMostDetailed(positions);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMillis);
+  while (!future.isReady()) {
+    if (std::chrono::steady_clock::now() >= deadline || impl->loadFailed->load())
+      throw std::runtime_error("Terrain height query failed or timed out");
+    impl->tileset->updateViewGroup(impl->tileset->getDefaultViewGroup(), {}, 0.0f);
+    impl->tileset->loadTiles();
+    impl->accessor->tick();
+    impl->async.dispatchMainThreadTasks();
+    // A height query does not need mesh copies for a renderer.
+    impl->resources->loaded.clear();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  const auto result = future.wait();
+  if (result.positions.size() != input.size() || result.sampleSuccess.size() != input.size())
+    throw std::runtime_error("Incomplete terrain height query");
+  rust::Vec<double> heights;
+  heights.reserve(input.size());
+  for (size_t i = 0; i < input.size(); ++i) {
+    if (!result.sampleSuccess[i] || !std::isfinite(result.positions[i].height))
+      throw std::runtime_error("Missing terrain height");
+    heights.push_back(result.positions[i].height);
+  }
+  return heights;
+}
 Frame Session::update(rust::Slice<const View> input, float seconds) {
   std::vector<ViewState> views;
   for (const auto& view : input) {

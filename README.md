@@ -91,8 +91,10 @@ Downloaded data is not yet cached on disk.
 
 Rendering terrain does not add ground contact to the simulation. An aircraft
 flying below the surface sees the undersides and vertical edges of tiles.
-RC-jet's Cesium demo heads toward the valley. Terrain-aware ground contact is
-still on the checklist.
+`TerrainSampler` reads the most detailed terrain heights before a simulation
+starts, independently of camera LOD. Heights are meters above the WGS84 ellipsoid.
+Queries have a timeout and fail if any height is missing. The simulation must
+use these heights for its own contact model.
 
 ## Controlled captures
 
