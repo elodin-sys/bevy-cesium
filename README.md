@@ -1,10 +1,33 @@
-# Cesium for Bevy
+# Bevy-Cesium
 
 Load real terrain, aerial imagery and 3D Tiles into a Bevy application.
 Cesium Native downloads and selects the data; Bevy renders it locally.
 
 Built for **Bevy 0.19** and **Cesium Native 0.65.0**. Experimental,
 maintained by Elodin independently of Cesium. Tested locally on Apple Silicon macOS.
+
+## Structure
+
+The three Rust crates live in this repository. Applications depend on
+`bevy-cesium`; the other two are internal building blocks.
+`bevy-tiles` is our existing shared renderer, also used by Caevy.
+
+```mermaid
+flowchart TD
+    app["Your Bevy app / Elodin"] --> plugin["bevy-cesium<br/>Plugin and Cesium backend"]
+    plugin --> renderer["bevy-tiles<br/>Bevy meshes, materials and visibility"]
+    plugin --> bridge["cesium-native-bridge<br/>Rust interface to C++"]
+    bridge --> native["Cesium Native<br/>Selects, downloads and decodes terrain"]
+```
+
+Install from GitHub using a pinned commit or tag. These crates are not published
+to crates.io.
+
+## Demo
+
+Earlier integration in Elodin, using the public AGI headquarters 3D Tiles sample:
+
+https://github.com/user-attachments/assets/8cc6c6b6-20e7-4b96-a51c-ef1f1659bdb0
 
 ## Try it
 
@@ -135,5 +158,5 @@ For custom coordinate systems such as Elodin's floating origin, use
 Earth-fixed coordinates), and place `CesiumPrimitive` entities yourself.
 The update order is `Views → Stream → Placement → Publish`; move cameras before
 `Views`, place terrain in `Placement`, and check capture readiness after `Publish`.
-See the [API reference](https://elodin-sys.github.io/bevy-cesium/bevy_tiles/).
+See the [Bevy-Cesium API reference](https://elodin-sys.github.io/bevy-cesium/bevy_cesium/).
 Ion imagery currently supports one shared overlay per process, using the terrain token.

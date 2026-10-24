@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "bevy-cesium"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "bevy-tiles",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "bevy-tiles"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
 ]
@@ -1598,7 +1598,7 @@ dependencies = [
 
 [[package]]
 name = "cesium-native-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cxx",
  "cxx-build",

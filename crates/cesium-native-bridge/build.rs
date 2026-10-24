@@ -1,4 +1,9 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+    // Rustdoc needs the Rust API, not a compiled or linked native SDK.
+    if std::env::var_os("DOCS_RS").is_some() {
+        return;
+    }
     println!("cargo:rerun-if-env-changed=CESIUM_NATIVE_DIR");
     {
         let root = native_install();
@@ -19,10 +24,13 @@ fn main() {
         if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             bridge
                 .flag("/utf-8")
+                .flag("/EHsc")
                 // Native headers need C++20, but async++ 1.2 still uses result_of.
                 .define("_HAS_DEPRECATED_RESULT_OF", "1")
-                // async++ includes Windows headers; exclude GDI's OPAQUE macro.
+                // async++ includes Windows headers. WIN32_LEAN_AND_MEAN does
+                // not exclude GDI's OPAQUE macro, which conflicts with glTF.
                 .define("WIN32_LEAN_AND_MEAN", None)
+                .define("NOGDI", None)
                 .define("NOMINMAX", None);
         }
         bridge.compile("cesium-bridge");

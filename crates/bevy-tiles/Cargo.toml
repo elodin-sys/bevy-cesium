@@ -1,6 +1,7 @@
 [package]
 name = "bevy-tiles"
-version = "0.2.0"
+publish = false
+version = "0.2.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Shared Bevy scene contract for 3D Tiles backends"

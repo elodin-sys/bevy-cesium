@@ -1,10 +1,33 @@
+//! # Bevy-Cesium
+//!
+//! Stream real terrain, aerial imagery and 3D Tiles into Bevy using Cesium Native.
+//!
+//! Add [`CesiumPlugin`], mark your cameras with [`CesiumCamera`], and set
+//! [`CesiumGeoreference`] to place Earth coordinates in your scene. Your app
+//! supplies lighting and displays the attribution from [`CesiumCredits`].
+//!
+//! For stable startup, enable `CesiumPlugin::with_initial_load_wait` and show a
+//! loading message until [`CesiumStatus::ready_for_capture`] reports readiness.
+//! Set a timeout in your app. Enable `CesiumPlugin::with_lod_retention_margin`
+//! to keep acquired terrain detail until it leaves all camera views plus a margin.
+//!
+//! For controlled captures, supply [`CesiumDetailViews`] and select
+//! [`CesiumSelectionMode::Fixed`]. Repeatable pixels also need fixed terrain data
+//! and a controlled rendering environment.
+//!
+//! See the [README and examples](https://github.com/elodin-sys/bevy-cesium)
+//! for setup and the remaining work. The lower-level `bevy_tiles` crate provides
+//! the shared rendering contract; applications normally use this crate.
 #![forbid(unsafe_code)]
 use bevy_tiles::{Backend, BackendError, Frame, Options, Primitive, Tile};
+#[doc(inline)]
 pub use bevy_tiles::{
     CesiumCamera, CesiumConfigError, CesiumCredits, CesiumDetailViews, CesiumGeoreference,
     CesiumPrimitive, CesiumSelectionMode, CesiumSet, CesiumSource, CesiumStatus, CesiumView,
     CesiumViews, GeographicImagery,
 };
+/// Bevy plugin backed by Cesium Native. Use its builder methods to configure
+/// detail, retention and the initial loading wait before adding it to your app.
 pub type CesiumPlugin = bevy_tiles::TilesPlugin<NativeBackend>;
 pub struct NativeBackend(cesium_native_bridge::Session);
 impl Backend for NativeBackend {
