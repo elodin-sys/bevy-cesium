@@ -94,7 +94,9 @@ flying below the surface sees the undersides and vertical edges of tiles.
 `TerrainSampler` reads the most detailed terrain heights before a simulation
 starts, independently of camera LOD. Heights are meters above the WGS84 ellipsoid.
 Queries have a timeout and fail if any height is missing. The simulation must
-use these heights for its own contact model.
+use these heights for its own contact model. Elodin RC-jet prepares a fixed height
+grid before the flight, resolves ground contact and continues the simulation.
+Its grid is an approximation; it is not a collision mesh or an aircraft damage model.
 
 ## Controlled captures
 
@@ -142,7 +144,7 @@ can change. Identical pixels also require a controlled rendering environment.
   wait for rendering to be ready, then compare captures.
 - [ ] During interactive use, load the package first and download extra terrain
   when the camera leaves its coverage.
-- [ ] Add terrain-height queries for simulation ground contact, separately from rendering.
+- [x] Add terrain-height queries for simulation ground contact, separately from rendering.
 
 ## Development
 
