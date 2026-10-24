@@ -89,20 +89,25 @@ until the initial terrain is ready. The simulation continues during loading.
 The color sensor is enabled. The zoomed infrared sensor is temporarily disabled
 in Cesium mode because it greatly increases initial loading time. Its panel stays
 visible without a stream; loading time, image quality and performance remain to be validated.
-Downloaded data is not yet cached on disk.
+Rendering data is not yet cached on disk.
 
 Rendering terrain does not add ground contact to the simulation. An aircraft
 flying below the surface sees the undersides and vertical edges of tiles.
 `TerrainSampler` reads the most detailed terrain heights before a simulation
 starts, independently of camera LOD. Heights are meters above the WGS84 ellipsoid.
 Queries have a timeout and fail if any height is missing. The simulation must
-use these heights for its own contact model. Elodin RC-jet prepares a fixed height
-grid before the flight, resolves ground contact and continues the simulation.
-Its grid is an approximation; it is not a collision mesh or an aircraft damage model.
+use these heights for its own contact model.
+
+Elodin separates the [rendering PR](https://github.com/elodin-sys/elodin/pull/914)
+from the [shared terrain API branch](https://github.com/elodin-sys/elodin/tree/work/cesium-terrain-api).
+The latter adds `el.terrain_heightmap()` in nox-py: provide an ECEF center,
+dimensions and spacing; Elodin prepares and caches the grid, then provides a
+JAX lookup. RC-jet supplies the contact response. This integration is pending
+review, and comes before infrared work.
 
 ### Why RC-jet can bounce
 
-Elodin uses a simple spring-and-damper contact model: the ground pushes the aircraft
+The terrain API branch uses a simple spring-and-damper contact model: the ground pushes the aircraft
 out, while damping reduces motion into the surface. After each physics step,
 Elodin also lifts any penetrating reference point above the ground and removes
 velocity into the slope. The aircraft keeps moving, so it can bounce or slide
@@ -118,7 +123,7 @@ handling remains to be added in Elodin.
 
 ### Infrared remains disabled
 
-**Next planned task: make RC-jet's infrared camera usable with Cesium terrain.**
+**After the shared terrain API: make RC-jet's infrared camera usable with Cesium.**
 It should show estimated heat contrast, while the color camera shows visible light.
 The infrared panel stays visible without a stream until this work is validated.
 
@@ -185,7 +190,9 @@ can change. Identical pixels also require a controlled rendering environment.
 - [x] Test loading failures, detail retention and GPU transitions with local assets;
   validate the integration locally in RC-jet.
 - [x] Validate RC-jet's color sensor locally and keep it enabled.
-- [ ] **Next:** measure and reduce infrared costs, validate heat contrast and both
+- [x] Prepare a shared terrain API in Elodin with cached heights and a JAX lookup.
+- [ ] **Next:** review and integrate the shared API and RC-jet contact separately from rendering.
+- [ ] Then measure and reduce infrared costs, validate heat contrast and both
   camera streams, then enable infrared again in Cesium mode.
 - [ ] Validate full airframe contact and low-mounted cameras against collision meshes;
   the current height grid can differ from visible terrain near the surface.
