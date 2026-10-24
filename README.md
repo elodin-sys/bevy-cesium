@@ -100,6 +100,24 @@ use these heights for its own contact model. Elodin RC-jet prepares a fixed heig
 grid before the flight, resolves ground contact and continues the simulation.
 Its grid is an approximation; it is not a collision mesh or an aircraft damage model.
 
+### Infrared remains disabled
+
+The RC-jet integration has several separate costs to investigate:
+
+- Its 18° zoom asks Cesium for finer terrain than the 90° color camera. Both
+  sensors share the initial loading gate, so infrared can delay the color stream.
+  Separate online trials took about 12 s for color and 96 s with both sensors;
+  these are observations, not a controlled benchmark.
+- Elodin's infrared preset renders 640 × 512 at 60 fps, with extra thermal passes
+  and GPU-to-CPU transfers. Raw `gray8` output alone is about 20 MB/s, or 6 GB
+  for five minutes, before database overhead.
+- Cesium imagery is not thermal data. Elodin currently estimates untagged terrain
+  temperature from lighting; infrared contrast needs its own validation.
+
+Measure loading, GPU work, transfers and recording separately before enabling it.
+The 500 m retention benchmark stayed below 1 ms at the 95th percentile for CPU
+selection in the tested route; that does not measure sensor rendering cost.
+
 ## Controlled captures
 
 For a known camera path, supply all reference views before loading:
@@ -140,6 +158,8 @@ can change. Identical pixels also require a controlled rendering environment.
 - [x] Validate RC-jet's color sensor locally and keep it enabled.
 - [ ] Reduce loading time and validate image quality and performance of RC-jet's
   infrared sensor, then enable it again in Cesium mode.
+- [ ] Validate full airframe contact and low-mounted cameras against collision meshes;
+  the current height grid can differ from visible terrain near the surface.
 - [ ] Cache downloaded terrain and imagery on disk for reuse between runs.
 - [ ] Save a complete terrain package for a chosen region and camera path,
   with a version and file checksums to verify its contents.
