@@ -22,10 +22,10 @@
 
 mod backend;
 mod render;
-pub use backend::{
-    CartographicPosition, CesiumPlugin, NativeBackend, TerrainQueryError, TerrainSampler,
-};
+mod terrain;
+pub use backend::{CesiumPlugin, NativeBackend};
 pub use render::*;
+pub use terrain::{CartographicPosition, TerrainQueryError, TerrainSampler};
 // CXX generates the FFI boundary here; application-facing code is safe Rust.
 #[allow(unsafe_code)]
 pub mod native;

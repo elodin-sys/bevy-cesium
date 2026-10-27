@@ -21,6 +21,34 @@ fn heights_are_sampled_without_a_render_camera() {
 }
 
 #[test]
+fn repeated_queries_share_a_session_and_match_a_single_batch() {
+    let url = format!(
+        "file://{}/tests/data/height.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let positions: Vec<_> = [1.0, 2.0, 3.0]
+        .into_iter()
+        .map(|offset| CartographicPosition {
+            longitude_radians: offset / 6_378_137.0,
+            latitude_radians: offset / 6_335_439.0,
+        })
+        .collect();
+    let timeout = Duration::from_secs(10);
+    let expected = Session::open_url(&url)
+        .unwrap()
+        .sample_heights(&positions, timeout)
+        .unwrap();
+    let mut session = Session::open_url(&url).unwrap();
+    for _ in 0..2 {
+        let actual: Vec<_> = positions
+            .chunks(2)
+            .flat_map(|batch| session.sample_heights(batch, timeout).unwrap())
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn missing_or_invalid_heights_are_errors_not_zero_elevations() {
     let url = format!(
         "file://{}/tests/data/height.json",

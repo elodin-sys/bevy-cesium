@@ -1,25 +1,4 @@
 use crate::{native, render};
-pub use native::{CartographicPosition, Error as TerrainQueryError};
-
-/// Terrain heights for simulation, sampled before the simulation starts.
-/// Uses the most detailed source data, independently of the renderer's LOD.
-/// Heights are meters above the WGS84 ellipsoid, not mean sea level.
-pub struct TerrainSampler(native::Session);
-impl TerrainSampler {
-    /// Open ion terrain without downloading aerial imagery.
-    pub fn from_ion(asset_id: i64, token: &str) -> Result<Self, TerrainQueryError> {
-        native::Session::open_terrain_ion(asset_id, token).map(Self)
-    }
-    /// Blocking query with a timeout. Fails if any position has no height.
-    pub fn sample_heights(
-        &mut self,
-        positions: &[CartographicPosition],
-        timeout: std::time::Duration,
-    ) -> Result<Vec<f64>, TerrainQueryError> {
-        self.0.sample_heights(positions, timeout)
-    }
-}
-
 use render::{Backend, BackendError, Frame, Options, Primitive, Tile};
 /// Bevy plugin backed by Cesium Native. Use its builder methods to configure
 /// detail, retention and the initial loading wait before adding it to your app.

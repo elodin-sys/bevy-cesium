@@ -97,12 +97,16 @@ flying below the surface sees the undersides and vertical edges of tiles.
 starts, independently of camera LOD. Heights are meters above the WGS84 ellipsoid.
 Queries have a timeout and fail if any height is missing. The simulation must
 use these heights for its own contact model.
+Reuse one sampler across batches (up to one million positions per call) to keep
+the tileset and downloaded tiles. After a query error, retry with a fresh sampler.
 
 Elodin separates the [rendering PR](https://github.com/elodin-sys/elodin/pull/914)
 from the [shared terrain API branch](https://github.com/elodin-sys/elodin/tree/work/cesium-terrain-api).
 The latter adds `el.terrain_heightmap()` in nox-py: provide an ECEF center,
 dimensions and spacing; Elodin prepares and caches the grid, then provides a
-JAX lookup. RC-jet supplies the contact response. This integration is pending
+JAX lookup. One CLI process samples the grid in batches through Bevy-Cesium,
+sharing a native session without going through the Editor's rendering plugin.
+RC-jet supplies the contact response. This integration is pending
 review, and comes before infrared work.
 
 ### Why RC-jet can bounce
