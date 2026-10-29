@@ -373,6 +373,10 @@ struct Session::Impl {
     // the cache and delay readiness for narrow-field sensor cameras.
     options.preloadAncestors = false;
     options.preloadSiblings = false;
+    // Keep native finalization/cache eviction from monopolizing a render tick.
+    // These are soft CPU budgets, not limits on network loads or tile detail.
+    options.mainThreadLoadingTimeLimit = 2.0;
+    options.tileCacheUnloadTimeLimit = 1.0;
     auto failed = loadFailed;
     // Native 0.65 calls this for root/ion failures, not failed child tiles.
     options.loadErrorCallback = [failed](const auto&) { failed->store(true); };

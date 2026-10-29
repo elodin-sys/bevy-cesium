@@ -83,13 +83,21 @@ with an extra margin in meters. Retention is off by default; this example enable
 - **Several cameras:** detail needed by any supplied camera is kept. A temporary
   gap with no cameras does not clear it.
 
-Elodin's RC-jet example enables a **500 m margin** and **16 px screen error**.
-Elodin pins an exact Git revision of Bevy-Cesium and shows a loading message
-until the initial terrain is ready. The simulation continues during loading.
-The color sensor is enabled. The zoomed infrared sensor is temporarily disabled
-in Cesium mode because it greatly increases initial loading time. Its panel stays
-visible without a stream; loading time, image quality and performance remain to be validated.
+Elodin's RC-jet launcher defaults to 48 px screen error and disables detail
+retention on a shared laptop GPU. Color and infrared previews are both enabled;
+co-located, aligned sensors share the wider camera's terrain selection. Elodin
+pins an exact Git revision of Bevy-Cesium and waits for the initial terrain
+before emitting sensor images. The simulation continues during loading.
 Rendering data is not yet cached on disk.
+
+Native tile loading and cache eviction use soft CPU budgets of 2 ms and 1 ms per
+update. Terrain textures release their CPU pixels after render extraction;
+meshes retain CPU data for host raycasts. Hosts can use Bevy's
+`RenderAssetBytesPerFrame` to spread mesh/image uploads across frames (Elodin
+uses 8 MiB for Cesium sessions). Each limit can be exceeded by one indivisible
+operation. Publication still waits for a complete GPU-ready selection.
+Enable `bevy_cesium::render=trace` logging for per-update backend and CPU asset
+preparation timings; those are not GPU timings.
 
 Rendering terrain does not add ground contact to the simulation. An aircraft
 flying below the surface sees the undersides and vertical edges of tiles.

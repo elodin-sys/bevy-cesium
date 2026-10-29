@@ -17,6 +17,7 @@ mod contract;
 pub use contract::*;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
+use std::time::Instant;
 
 mod source;
 pub use source::{CesiumConfigError, CesiumSource, GeographicImagery};
@@ -317,6 +318,7 @@ fn stream<B: Backend>(
     } else {
         views.0.iter().chain(&detail_views.0).copied().collect()
     };
+    let update_started = Instant::now();
     let frame = match native.session.update(&selection_views, time.delta_secs()) {
         Ok(frame) => frame,
         Err(error) => {
@@ -325,6 +327,9 @@ fn stream<B: Backend>(
             return;
         }
     };
+    let backend_ms = update_started.elapsed().as_secs_f64() * 1000.0;
+    let received_tiles = frame.loaded.len();
+    let preparation_started = Instant::now();
     credits.html = frame.credits;
     status.load_failed = frame.load_failed;
     status.error = if frame.load_failed {
@@ -375,7 +380,9 @@ fn stream<B: Backend>(
                     TextureDimension::D2,
                     p.pixels,
                     TextureFormat::Rgba8UnormSrgb,
-                    RenderAssetUsages::default(),
+                    // Terrain pixels are used only on the GPU. Keep meshes in
+                    // the main world for host raycasts, but release texture RAM.
+                    RenderAssetUsages::RENDER_WORLD,
                 )))
             } else {
                 None
@@ -429,6 +436,12 @@ fn stream<B: Backend>(
         native.removed.remove(&tile.id);
     }
     native.removed.extend(frame.removed);
+    trace!(
+        backend_ms,
+        preparation_ms = preparation_started.elapsed().as_secs_f64() * 1000.0,
+        received_tiles,
+        "Cesium CPU streaming timings"
+    );
 }
 
 fn publish<B: Backend>(

@@ -43,10 +43,10 @@ fn extract_candidates(
     tiles: Extract<Query<(Entity, &TileAssets)>>,
     mut candidates: ResMut<Candidates>,
 ) {
-    candidates.0 = tiles
-        .iter()
-        .map(|(e, assets)| (e, assets.clone()))
-        .collect();
+    candidates.0.clear();
+    candidates
+        .0
+        .extend(tiles.iter().map(|(e, assets)| (e, assets.clone())));
 }
 
 fn report_ready(
