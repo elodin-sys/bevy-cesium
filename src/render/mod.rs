@@ -765,7 +765,7 @@ mod tests {
         let tile = app
             .world()
             .non_send::<NativeSession<ControlledBackend>>()
-            .tiles[&1][0];
+            .replacements[&1][0];
         assert!(app.world().get_entity(tile).is_ok());
         app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Url("second".into()))));
         app.update();
@@ -775,6 +775,8 @@ mod tests {
                 .contains_non_send::<NativeSession<ControlledBackend>>()
         );
         step(&mut app, vec![packet(2)], vec![2], vec![]);
+        acknowledge(&mut app, 2);
+        step(&mut app, vec![], vec![2], vec![]);
         let tile = app
             .world()
             .non_send::<NativeSession<ControlledBackend>>()
