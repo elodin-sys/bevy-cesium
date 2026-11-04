@@ -65,6 +65,12 @@ The screen-error setting controls detail: smaller values request finer terrain.
 The retention setting keeps acquired detail until it leaves all camera views,
 with an extra margin in meters. Retention is off by default; this example enables it.
 
+For applications that receive their dataset after startup, install
+`CesiumPlugin::deferred()` instead. Insert `CesiumSourceUpdate(Some(source))`
+into the Bevy world when the configuration arrives. A replacement drops the
+previous tileset and its geometry; `CesiumSourceUpdate(None)` disables streaming.
+The same plugin settings apply to each replacement.
+
 ## Terrain stability
 
 - **Startup:** `.with_initial_load_wait()` keeps provisional terrain hidden until

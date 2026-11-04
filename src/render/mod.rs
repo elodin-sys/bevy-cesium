@@ -110,6 +110,11 @@ pub enum CesiumSet {
     Publish,
 }
 
+/// Replace or disable a tileset at runtime, for example when loading a schematic.
+/// Credentials stay in memory and are never reflected or logged.
+#[derive(Resource)]
+pub struct CesiumSourceUpdate(pub Option<CesiumSource>);
+
 struct NativeSession<B: Backend> {
     session: B,
     tiles: HashMap<u64, Vec<Entity>>,
@@ -123,14 +128,25 @@ struct NativeSession<B: Backend> {
 pub struct TilesPlugin<B: Backend> {
     backend: PhantomData<fn() -> B>,
     options: Options,
-    source: CesiumSource,
+    source: Option<CesiumSource>,
     external_coordinates: bool,
     wait_for_initial_load: bool,
 }
 impl<B: Backend> TilesPlugin<B> {
     pub fn new(source: CesiumSource) -> Self {
         Self {
-            source,
+            source: Some(source),
+            backend: PhantomData,
+            options: Options::default(),
+            external_coordinates: false,
+            wait_for_initial_load: false,
+        }
+    }
+    /// Install streaming without opening a dataset. Insert CesiumSourceUpdate
+    /// when the application's configuration becomes available.
+    pub fn deferred() -> Self {
+        Self {
+            source: None,
             backend: PhantomData,
             options: Options::default(),
             external_coordinates: false,
@@ -187,42 +203,94 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
                 )
                     .chain(),
             );
-        let result = if !self.source.valid() {
-            Err(BackendError("Invalid source configuration"))
-        } else if self.options.maximum_screen_error.is_finite()
-            && self.options.maximum_screen_error > 0.0
-            && self.options.lod_retention_margin.is_finite()
-            && self.options.lod_retention_margin >= 0.0
-            && self.options.unused_cache_bytes as u64 <= i64::MAX as u64
-        {
-            B::open(&self.source, self.options)
-        } else {
-            Err(BackendError("Invalid streaming options"))
-        };
-        match result {
-            Ok(session) => {
-                app.insert_non_send(NativeSession {
-                    session,
-                    tiles: HashMap::new(),
-                    replacements: HashMap::new(),
-                    selected: HashSet::new(),
-                    published: HashSet::new(),
-                    removed: HashSet::new(),
-                    waiting_for_initial_load: self.wait_for_initial_load,
-                })
-                .add_systems(Update, stream::<B>.in_set(CesiumSet::Stream))
-                .add_systems(Update, publish::<B>.in_set(CesiumSet::Publish));
-                if !self.external_coordinates {
-                    app.add_systems(Update, collect_views.in_set(CesiumSet::Views))
-                        .add_systems(Update, place_tiles.in_set(CesiumSet::Placement));
+        app.add_systems(
+            Update,
+            stream::<B>
+                .in_set(CesiumSet::Stream)
+                .run_if(session_exists::<B>),
+        )
+        .add_systems(
+            Update,
+            publish::<B>
+                .in_set(CesiumSet::Publish)
+                .run_if(session_exists::<B>),
+        );
+        if !self.external_coordinates {
+            app.add_systems(Update, collect_views.in_set(CesiumSet::Views))
+                .add_systems(Update, place_tiles.in_set(CesiumSet::Placement));
+        }
+        let options = self.options;
+        let wait = self.wait_for_initial_load;
+        app.add_systems(
+            Update,
+            (move |world: &mut World| {
+                if let Some(request) = world.remove_resource::<CesiumSourceUpdate>() {
+                    replace_source::<B>(world, request.0.as_ref(), options, wait);
                 }
+            })
+            .in_set(CesiumSet::Stream)
+            .before(stream::<B>),
+        );
+        if let Some(source) = self.source.as_ref() {
+            replace_source::<B>(app.world_mut(), Some(source), options, wait);
+        }
+    }
+}
+
+fn session_exists<B: Backend>(session: Option<NonSend<NativeSession<B>>>) -> bool {
+    session.is_some()
+}
+
+fn replace_source<B: Backend>(
+    world: &mut World,
+    source: Option<&CesiumSource>,
+    options: Options,
+    wait: bool,
+) {
+    if let Some(previous) = world.remove_non_send_resource::<NativeSession<B>>() {
+        for entity in previous
+            .tiles
+            .values()
+            .chain(previous.replacements.values())
+            .flatten()
+        {
+            if let Ok(entity) = world.get_entity_mut(*entity) {
+                entity.despawn();
             }
-            Err(error) => {
-                let mut status = app.world_mut().resource_mut::<CesiumStatus>();
-                status.load_failed = true;
-                status.error = Some(error.0);
-                error!("Could not initialize 3D Tiles backend");
-            }
+        }
+    }
+    *world.resource_mut::<CesiumCredits>() = CesiumCredits::default();
+    *world.resource_mut::<CesiumStatus>() = CesiumStatus::default();
+    let Some(source) = source else {
+        return;
+    };
+    let result = if !source.valid() {
+        Err(BackendError("Invalid source configuration"))
+    } else if options.maximum_screen_error.is_finite()
+        && options.maximum_screen_error > 0.0
+        && options.lod_retention_margin.is_finite()
+        && options.lod_retention_margin >= 0.0
+        && options.unused_cache_bytes as u64 <= i64::MAX as u64
+    {
+        B::open(source, options)
+    } else {
+        Err(BackendError("Invalid streaming options"))
+    };
+    match result {
+        Ok(session) => world.insert_non_send_resource(NativeSession {
+            session,
+            tiles: HashMap::new(),
+            replacements: HashMap::new(),
+            selected: HashSet::new(),
+            published: HashSet::new(),
+            removed: HashSet::new(),
+            waiting_for_initial_load: wait,
+        }),
+        Err(error) => {
+            let mut status = world.resource_mut::<CesiumStatus>();
+            status.load_failed = true;
+            status.error = Some(error.0);
+            error!("Could not initialize 3D Tiles backend");
         }
     }
 }
@@ -677,6 +745,69 @@ mod tests {
             .init_resource::<ReadyTiles>();
         app
     }
+    #[test]
+    fn deferred_source_can_start_replace_and_stop_without_leaving_geometry() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .add_plugins(TilesPlugin::<ControlledBackend>::deferred().with_external_coordinates())
+            .init_resource::<ReadyTiles>();
+        app.update();
+        assert!(
+            !app.world()
+                .contains_non_send::<NativeSession<ControlledBackend>>()
+        );
+        app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Url("first".into()))));
+        app.update();
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        let tile = app
+            .world()
+            .non_send::<NativeSession<ControlledBackend>>()
+            .tiles[&1][0];
+        assert!(app.world().get_entity(tile).is_ok());
+        app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Url("second".into()))));
+        app.update();
+        assert!(app.world().get_entity(tile).is_err());
+        assert!(
+            app.world()
+                .contains_non_send::<NativeSession<ControlledBackend>>()
+        );
+        step(&mut app, vec![packet(2)], vec![2], vec![]);
+        let tile = app
+            .world()
+            .non_send::<NativeSession<ControlledBackend>>()
+            .tiles[&2][0];
+        app.insert_resource(CesiumSourceUpdate(None));
+        app.update();
+        assert!(app.world().get_entity(tile).is_err());
+        assert!(
+            !app.world()
+                .contains_non_send::<NativeSession<ControlledBackend>>()
+        );
+        assert_eq!(app.world().resource::<CesiumStatus>().visible_tiles, 0);
+    }
+
+    #[test]
+    fn invalid_runtime_source_fails_and_a_valid_replacement_recovers() {
+        let mut app = controlled_app();
+        app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Url(String::new()))));
+        app.update();
+        assert!(app.world().resource::<CesiumStatus>().load_failed);
+        assert!(
+            !app.world()
+                .contains_non_send::<NativeSession<ControlledBackend>>()
+        );
+        app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Url("valid".into()))));
+        app.update();
+        assert!(!app.world().resource::<CesiumStatus>().load_failed);
+        assert!(
+            app.world()
+                .contains_non_send::<NativeSession<ControlledBackend>>()
+        );
+    }
+
     fn packet(id: u64) -> Tile {
         let mut tile = ReplacingTile(0).update(&[], 0.).unwrap().loaded.remove(0);
         tile.id = id;
