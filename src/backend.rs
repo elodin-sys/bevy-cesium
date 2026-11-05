@@ -16,6 +16,11 @@ impl Backend for NativeBackend {
                     "Raster overlays are not exposed by the Native bridge",
                 ));
             }
+            render::CesiumSource::IonTerrain {
+                asset_id,
+                imagery_asset_id,
+                access_token,
+            } => native::Session::open_ion_with_imagery(*asset_id, *imagery_asset_id, access_token),
             render::CesiumSource::Ion {
                 asset_id,
                 access_token,

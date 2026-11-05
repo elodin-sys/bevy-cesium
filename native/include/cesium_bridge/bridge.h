@@ -9,7 +9,7 @@ struct CartographicPosition;
 class Session {
 public:
   explicit Session(rust::Str url);
-  Session(int64_t asset, rust::Str token, bool imagery = true);
+  Session(int64_t asset, rust::Str token, bool imagery = true, int64_t imageryAsset = 0);
   ~Session();
   void configure(double error, uint64_t cacheBytes);
   void configure_retention(double marginMeters);
@@ -21,5 +21,6 @@ private:
 };
 std::unique_ptr<Session> open_url(rust::Str url);
 std::unique_ptr<Session> open_ion(int64_t asset, rust::Str token);
+std::unique_ptr<Session> open_ion_with_imagery(int64_t asset, int64_t imageryAsset, rust::Str token);
 std::unique_ptr<Session> open_terrain_ion(int64_t asset, rust::Str token);
 }

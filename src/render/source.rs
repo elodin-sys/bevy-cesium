@@ -5,6 +5,12 @@ pub enum CesiumSource {
         asset_id: i64,
         access_token: String,
     },
+    /// Ion terrain with one aerial-imagery dataset, scoped to this session.
+    IonTerrain {
+        asset_id: i64,
+        imagery_asset_id: i64,
+        access_token: String,
+    },
     /// EPSG:4326/TMS quantized-mesh terrain and an optional matching imagery grid.
     Terrain {
         url: String,
@@ -41,6 +47,16 @@ impl CesiumSource {
                             .all(|v| i.url_template.contains(v))
                             && !i.credit.trim().is_empty()
                     })
+            }
+            Self::IonTerrain {
+                asset_id,
+                imagery_asset_id,
+                access_token,
+            } => {
+                *imagery_asset_id > 0
+                    && *asset_id > 0
+                    && !access_token.trim().is_empty()
+                    && !access_token.contains(['\r', '\n'])
             }
             Self::Ion {
                 asset_id,
@@ -112,6 +128,27 @@ impl CesiumSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ion_terrain_requires_both_datasets_and_a_valid_token() {
+        for (asset_id, imagery_asset_id, token, valid) in [
+            (1, 2, "read-token", true),
+            (0, 2, "read-token", false),
+            (1, 0, "read-token", false),
+            (1, 2, " ", false),
+            (1, 2, "read\ntoken", false),
+        ] {
+            assert_eq!(
+                CesiumSource::IonTerrain {
+                    asset_id,
+                    imagery_asset_id,
+                    access_token: token.into(),
+                }
+                .valid(),
+                valid
+            );
+        }
+    }
+
     #[test]
     fn terrain_imagery_requires_grid_coordinates_and_credit() {
         let source = |template: &str, credit: &str| CesiumSource::Terrain {

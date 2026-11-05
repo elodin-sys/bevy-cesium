@@ -246,4 +246,15 @@ Earth-fixed coordinates), and place `CesiumPrimitive` entities yourself.
 The update order is `Views → Stream → Placement → Publish`; move cameras before
 `Views`, place terrain in `Placement`, and check capture readiness after `Publish`.
 See the [Bevy-Cesium API reference](https://elodin-sys.github.io/bevy-cesium/bevy_cesium/).
-Ion imagery currently supports one shared overlay per process, using the terrain token.
+Use `CesiumSource::IonTerrain` to select terrain and aerial imagery per session:
+
+```rust
+let source = CesiumSource::IonTerrain {
+    asset_id: 1,
+    imagery_asset_id: 2,
+    access_token,
+};
+```
+
+Both datasets use the supplied read token. This explicit source ignores
+`CESIUM_ION_IMAGERY_ASSET_ID`; height queries use the terrain without imagery.

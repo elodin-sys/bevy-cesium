@@ -410,21 +410,22 @@ Session::Session(rust::Str url) : impl(std::make_unique<Impl>()) {
   impl->tileset = std::make_unique<Tileset>(impl->externals(), std::string(url), impl->options());
   impl->observeRootFailure();
 }
-Session::Session(int64_t asset, rust::Str token, bool imagery) : impl(std::make_unique<Impl>()) {
+Session::Session(int64_t asset, rust::Str token, bool imagery, int64_t imageryAsset) : impl(std::make_unique<Impl>()) {
   registerContentTypes();
   impl->tileset = std::make_unique<Tileset>(impl->externals(), asset, std::string(token), impl->options());
   if (const auto* value = imagery ? std::getenv("CESIUM_ION_IMAGERY_ASSET_ID") : nullptr) {
     const std::string text(value);
-    int64_t imagery = 0;
-    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), imagery);
-    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || imagery <= 0)
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), imageryAsset);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || imageryAsset <= 0)
       throw std::runtime_error("Invalid imagery asset ID");
+  }
+  if (imageryAsset > 0) {
     CesiumRasterOverlays::RasterOverlayOptions options;
     auto failed = impl->loadFailed;
     options.loadErrorCallback = [failed](const auto&) { failed->store(true); };
     impl->tileset->getOverlays().add(
         CesiumUtility::IntrusivePointer<CesiumRasterOverlays::IonRasterOverlay>(
-            new CesiumRasterOverlays::IonRasterOverlay("Aerial imagery", imagery, std::string(token), options)));
+            new CesiumRasterOverlays::IonRasterOverlay("Aerial imagery", imageryAsset, std::string(token), options)));
   }
   impl->observeRootFailure();
 }
@@ -439,6 +440,9 @@ void Session::configure_retention(double marginMeters) {
 }
 std::unique_ptr<Session> open_url(rust::Str url) { return std::make_unique<Session>(url); }
 std::unique_ptr<Session> open_ion(int64_t asset, rust::Str token) { return std::make_unique<Session>(asset, token); }
+std::unique_ptr<Session> open_ion_with_imagery(int64_t asset, int64_t imageryAsset, rust::Str token) {
+  return std::make_unique<Session>(asset, token, false, imageryAsset);
+}
 std::unique_ptr<Session> open_terrain_ion(int64_t asset, rust::Str token) { return std::make_unique<Session>(asset, token, false); }
 rust::Vec<double> Session::sample_heights(rust::Slice<const CartographicPosition> input, uint64_t timeoutMillis) {
   std::vector<CesiumGeospatial::Cartographic> positions;

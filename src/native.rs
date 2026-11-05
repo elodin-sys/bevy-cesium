@@ -31,6 +31,23 @@ impl Session {
         }
         ffi::open_ion(asset_id, token).map(Self).map_err(|_| Error)
     }
+    /// Open ion terrain and imagery explicitly, independently of environment settings.
+    pub fn open_ion_with_imagery(
+        asset_id: i64,
+        imagery_asset_id: i64,
+        token: &str,
+    ) -> Result<Self, Error> {
+        if asset_id <= 0
+            || imagery_asset_id <= 0
+            || token.trim().is_empty()
+            || token.contains(['\r', '\n'])
+        {
+            return Err(Error);
+        }
+        ffi::open_ion_with_imagery(asset_id, imagery_asset_id, token)
+            .map(Self)
+            .map_err(|_| Error)
+    }
     /// Open a terrain-only session, without the optional imagery overlay.
     pub fn open_terrain_ion(asset_id: i64, token: &str) -> Result<Self, Error> {
         if asset_id <= 0 || token.is_empty() {
@@ -183,6 +200,11 @@ mod ffi {
         type Session;
         fn open_url(url: &str) -> Result<UniquePtr<Session>>;
         fn open_ion(asset_id: i64, token: &str) -> Result<UniquePtr<Session>>;
+        fn open_ion_with_imagery(
+            asset_id: i64,
+            imagery_asset_id: i64,
+            token: &str,
+        ) -> Result<UniquePtr<Session>>;
         fn open_terrain_ion(asset_id: i64, token: &str) -> Result<UniquePtr<Session>>;
         fn sample_heights(
             self: Pin<&mut Session>,
@@ -223,5 +245,8 @@ mod tests {
     fn errors_do_not_expose_native_diagnostics() {
         assert_eq!(Error.to_string(), "Cesium Native operation failed");
         assert!(Session::open_ion(-1, "not-a-real-token").is_err());
+        assert!(Session::open_ion_with_imagery(1, 0, "not-a-real-token").is_err());
+        assert!(Session::open_ion_with_imagery(0, 2, "not-a-real-token").is_err());
+        assert!(Session::open_ion_with_imagery(1, 2, " ").is_err());
     }
 }
