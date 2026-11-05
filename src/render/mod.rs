@@ -203,18 +203,8 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
                 )
                     .chain(),
             );
-        app.add_systems(
-            Update,
-            stream::<B>
-                .in_set(CesiumSet::Stream)
-                .run_if(session_exists::<B>),
-        )
-        .add_systems(
-            Update,
-            publish::<B>
-                .in_set(CesiumSet::Publish)
-                .run_if(session_exists::<B>),
-        );
+        app.add_systems(Update, stream::<B>.in_set(CesiumSet::Stream))
+            .add_systems(Update, publish::<B>.in_set(CesiumSet::Publish));
         if !self.external_coordinates {
             app.add_systems(Update, collect_views.in_set(CesiumSet::Views))
                 .add_systems(Update, place_tiles.in_set(CesiumSet::Placement));
@@ -235,10 +225,6 @@ impl<B: Backend> Plugin for TilesPlugin<B> {
             replace_source::<B>(app.world_mut(), Some(source), options, wait);
         }
     }
-}
-
-fn session_exists<B: Backend>(session: Option<NonSend<NativeSession<B>>>) -> bool {
-    session.is_some()
 }
 
 fn replace_source<B: Backend>(
@@ -365,7 +351,7 @@ fn place_tiles(
 #[allow(clippy::too_many_arguments)]
 fn stream<B: Backend>(
     mut commands: Commands,
-    mut native: NonSendMut<NativeSession<B>>,
+    native: Option<NonSendMut<NativeSession<B>>>,
     views: Res<CesiumViews>,
     detail_views: Res<CesiumDetailViews>,
     selection_mode: Res<CesiumSelectionMode>,
@@ -376,6 +362,10 @@ fn stream<B: Backend>(
     mut credits: ResMut<CesiumCredits>,
     mut status: ResMut<CesiumStatus>,
 ) {
+    // Keep the check inside the non-send system: run conditions can execute on workers.
+    let Some(mut native) = native else {
+        return;
+    };
     if *selection_mode == CesiumSelectionMode::Fixed && detail_views.0.is_empty() {
         status.load_failed = true;
         status.error = Some("Fixed terrain selection requires reference views");
@@ -514,11 +504,14 @@ fn stream<B: Backend>(
 
 fn publish<B: Backend>(
     mut commands: Commands,
-    mut native: NonSendMut<NativeSession<B>>,
+    native: Option<NonSendMut<NativeSession<B>>>,
     ready: Option<Res<ReadyTiles>>,
     mut visibility: Query<&mut Visibility>,
     mut status: ResMut<CesiumStatus>,
 ) {
+    let Some(mut native) = native else {
+        return;
+    };
     let ready = ready
         .as_ref()
         .map(|r| r.0.lock().expect("tile readiness lock poisoned"));
@@ -745,6 +738,76 @@ mod tests {
             .init_resource::<ReadyTiles>();
         app
     }
+    #[test]
+    fn multithreaded_startup_keeps_the_native_session_on_its_owner_thread() {
+        use bevy::ecs::schedule::MultiThreadedExecutor;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use std::thread::{self, ThreadId};
+
+        struct ThreadBoundBackend {
+            owner: ThreadId,
+            updates: Rc<Cell<usize>>,
+        }
+        impl Backend for ThreadBoundBackend {
+            fn open(_: &CesiumSource, _: Options) -> Result<Self, BackendError> {
+                Ok(Self {
+                    owner: thread::current().id(),
+                    updates: Rc::new(Cell::new(0)),
+                })
+            }
+            fn update(&mut self, _: &[CesiumView], _: f32) -> Result<Frame, BackendError> {
+                assert_eq!(thread::current().id(), self.owner);
+                self.updates.set(self.updates.get() + 1);
+                Ok(Frame::default())
+            }
+        }
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .add_plugins(TilesPlugin::<ThreadBoundBackend>::deferred().with_external_coordinates())
+            .init_resource::<ReadyTiles>();
+        app.edit_schedule(Update, |schedule| {
+            schedule.set_executor(MultiThreadedExecutor::default());
+        });
+        // Publish must also remain safe when the preceding work finishes on a worker.
+        let owner = thread::current().id();
+        app.add_systems(
+            Update,
+            (move || assert_ne!(thread::current().id(), owner)).in_set(CesiumSet::Placement),
+        );
+        // Exercise both missing-session systems before a source arrives.
+        for _ in 0..8 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .contains_non_send::<NativeSession<ThreadBoundBackend>>()
+        );
+
+        app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Url(
+            "fixture".into(),
+        ))));
+        for _ in 0..64 {
+            app.update();
+        }
+        let native = app.world().non_send::<NativeSession<ThreadBoundBackend>>();
+        assert_eq!(native.session.owner, thread::current().id());
+        assert_eq!(native.session.updates.get(), 64);
+
+        app.insert_resource(CesiumSourceUpdate(None));
+        for _ in 0..8 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .contains_non_send::<NativeSession<ThreadBoundBackend>>()
+        );
+    }
+
     #[test]
     fn deferred_source_can_start_replace_and_stop_without_leaving_geometry() {
         let mut app = App::new();
