@@ -7,6 +7,8 @@
 #include <Cesium3DTilesSelection/RasterOverlayCollection.h>
 #include <CesiumRasterOverlays/IonRasterOverlay.h>
 #include <CesiumAsync/ITaskProcessor.h>
+#include <CesiumAsync/CachingAssetAccessor.h>
+#include <CesiumAsync/SqliteCache.h>
 #include <CesiumCurl/CurlAssetAccessor.h>
 #include <CesiumGltf/AccessorUtility.h>
 #include <CesiumGltfContent/GltfUtilities.h>
@@ -352,16 +354,51 @@ public:
 };
 }
 
+// The SDK calls this accessor only for uncached requests or revalidation.
+// Report one generic message per session; native URLs may contain credentials.
+class NetworkAccessor final : public CesiumAsync::IAssetAccessor {
+  std::shared_ptr<CesiumCurl::CurlAssetAccessor> inner;
+  std::atomic<bool> warned{false};
+public:
+  explicit NetworkAccessor(std::shared_ptr<CesiumCurl::CurlAssetAccessor> accessor)
+      : inner(std::move(accessor)) {}
+  CesiumAsync::Future<std::shared_ptr<CesiumAsync::IAssetRequest>> get(
+      const CesiumAsync::AsyncSystem& async, const std::string& url,
+      const std::vector<THeader>& headers) override {
+    if ((url.starts_with("https://") || url.starts_with("http://")) && !warned.exchange(true))
+      warn_cache_miss();
+    return inner->get(async, url, headers);
+  }
+  CesiumAsync::Future<std::shared_ptr<CesiumAsync::IAssetRequest>> request(
+      const CesiumAsync::AsyncSystem& async, const std::string& verb,
+      const std::string& url, const std::vector<THeader>& headers,
+      const std::span<const std::byte>& payload) override {
+    return inner->request(async, verb, url, headers, payload);
+  }
+  void tick() noexcept override { inner->tick(); }
+};
+
 struct Session::Impl {
   std::shared_ptr<Workers> workers = std::make_shared<Workers>();
   CesiumAsync::AsyncSystem async{workers};
-  static std::shared_ptr<CesiumCurl::CurlAssetAccessor> createAccessor() {
+  static std::shared_ptr<CesiumAsync::IAssetAccessor> createAccessor() {
     CesiumCurl::CurlAssetAccessorOptions options;
     if (auto* file = std::getenv("SSL_CERT_FILE")) options.certificateFile = file;
     else if (auto* file = std::getenv("NIX_SSL_CERT_FILE")) options.certificateFile = file;
-    return std::make_shared<CesiumCurl::CurlAssetAccessor>(options);
+    auto network = std::make_shared<NetworkAccessor>(
+        std::make_shared<CesiumCurl::CurlAssetAccessor>(options));
+    const auto path = terrain_cache_path();
+    if (path.empty()) return network;
+    try {
+      auto logger = std::make_shared<spdlog::logger>("cesium-cache", std::make_shared<spdlog::sinks::null_sink_mt>());
+      auto cache = std::make_shared<CesiumAsync::SqliteCache>(logger, std::string(path.data(), path.size()));
+      return std::make_shared<CesiumAsync::CachingAssetAccessor>(logger, network, cache);
+    } catch (const std::exception&) {
+      warn_cache_unavailable();
+      return network;
+    }
   }
-  std::shared_ptr<CesiumCurl::CurlAssetAccessor> accessor = createAccessor();
+  std::shared_ptr<CesiumAsync::IAssetAccessor> accessor = createAccessor();
   std::shared_ptr<Resources> resources = std::make_shared<Resources>();
   std::shared_ptr<CesiumUtility::CreditSystem> credits = std::make_shared<CesiumUtility::CreditSystem>();
   std::unique_ptr<Tileset> tileset;

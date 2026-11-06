@@ -9,6 +9,53 @@ fn copy_pixels(pixels: &[u8]) -> Vec<u8> {
     pixels.to_vec()
 }
 
+fn terrain_cache_path() -> String {
+    let root = std::env::var_os("XDG_CACHE_HOME")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|home| std::path::PathBuf::from(home).join(".cache"))
+        });
+    let Some(root) = root else {
+        warn_cache_unavailable();
+        return String::new();
+    };
+    let directory = root.join("bevy-cesium/terrain");
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    if builder.create(&directory).is_err() {
+        warn_cache_unavailable();
+        return String::new();
+    }
+    match directory
+        .join("requests.sqlite")
+        .into_os_string()
+        .into_string()
+    {
+        Ok(path) => path,
+        Err(_) => {
+            warn_cache_unavailable();
+            String::new()
+        }
+    }
+}
+
+fn warn_cache_miss() {
+    bevy::log::warn!("Cached terrain data missing or expired; fetching new terrain data");
+}
+
+fn warn_cache_unavailable() {
+    bevy::log::warn!("Terrain cache unavailable; fetching terrain data without a disk cache");
+}
+
 /// A native session confined to its creating thread. No native pointers escape.
 pub struct Session(cxx::UniquePtr<ffi::Session>);
 
@@ -135,6 +182,9 @@ fn valid_view(v: &View) -> bool {
 mod ffi {
     extern "Rust" {
         fn copy_pixels(pixels: &[u8]) -> Vec<u8>;
+        fn terrain_cache_path() -> String;
+        fn warn_cache_miss();
+        fn warn_cache_unavailable();
     }
 
     /// Longitude and latitude in radians on the WGS84 ellipsoid.

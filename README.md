@@ -94,7 +94,12 @@ retention on a shared laptop GPU. Color and infrared previews are both enabled;
 co-located, aligned sensors share the wider camera's terrain selection. Elodin
 pins an exact Git revision of Bevy-Cesium and waits for the initial terrain
 before emitting sensor images. The simulation continues during loading.
-Rendering data is not yet cached on disk.
+Native rendering and height queries share a persistent HTTP cache, enabled by
+default. Responses are stored in `$XDG_CACHE_HOME/bevy-cesium/terrain`, falling
+back to `~/.cache/bevy-cesium/terrain`. Missing or expired responses are fetched
+and cached according to the provider's HTTP cache rules. A session warns once
+when network access is needed. If the cache cannot be opened, loading continues
+without it.
 
 Native tile loading and cache eviction use soft CPU budgets of 2 ms and 1 ms per
 update. Terrain textures release their CPU pixels after render extraction;
