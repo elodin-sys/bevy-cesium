@@ -17,7 +17,10 @@ mod contract;
 pub use contract::*;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
+#[cfg(target_family = "wasm")]
+use web_time::Instant;
 
 mod source;
 pub use source::{CesiumConfigError, CesiumSource, GeographicImagery};
@@ -233,7 +236,7 @@ fn replace_source<B: Backend>(
     options: Options,
     wait: bool,
 ) {
-    if let Some(previous) = world.remove_non_send_resource::<NativeSession<B>>() {
+    if let Some(previous) = world.remove_non_send::<NativeSession<B>>() {
         for entity in previous
             .tiles
             .values()
@@ -263,7 +266,7 @@ fn replace_source<B: Backend>(
         Err(BackendError("Invalid streaming options"))
     };
     match result {
-        Ok(session) => world.insert_non_send_resource(NativeSession {
+        Ok(session) => world.insert_non_send(NativeSession {
             session,
             tiles: HashMap::new(),
             replacements: HashMap::new(),

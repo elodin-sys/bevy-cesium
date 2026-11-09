@@ -1,4 +1,9 @@
 fn main() {
+    // Build scripts run on the host even when compiling the browser target.
+    // The browser backend has no C++ bridge or native SDK to build/link.
+    if std::env::var("CARGO_CFG_TARGET_FAMILY").as_deref() == Ok("wasm") {
+        return;
+    }
     println!("cargo:rerun-if-env-changed=DOCS_RS");
     // Rustdoc needs the Rust API, not a compiled or linked native SDK.
     if std::env::var_os("DOCS_RS").is_some() {
