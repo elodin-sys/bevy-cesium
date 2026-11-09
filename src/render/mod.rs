@@ -61,13 +61,13 @@ impl Default for CesiumGeoreference {
     }
 }
 
-/// Native transform, retained in double precision for alternative spatial systems.
+/// Mesh-to-ECEF transform, retained in double precision for alternative spatial systems.
 #[derive(Component)]
 pub struct CesiumPrimitive {
     pub ecef_from_mesh: DMat4,
 }
 
-/// Native attribution HTML. The host must display it, preserving links/logos as
+/// Provider attribution HTML. The host must display it, preserving links/logos as
 /// required by its data provider. No application-specific UI is imposed here.
 #[derive(Resource, Default)]
 pub struct CesiumCredits {
@@ -167,6 +167,7 @@ impl<B: Backend> TilesPlugin<B> {
     /// Preserve acquired detail inside all selection views plus a spatial margin.
     /// Native retains refinement requirements, not just cached bytes. A positive
     /// margin enables retention; zero restores ordinary dynamic selection.
+    /// The browser backend supports only zero and rejects nonzero margins.
     pub fn with_lod_retention_margin(mut self, meters: f64) -> Self {
         self.options.lod_retention_margin = meters;
         self

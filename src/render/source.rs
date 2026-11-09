@@ -6,12 +6,15 @@ pub enum CesiumSource {
         access_token: String,
     },
     /// Ion terrain with one aerial-imagery dataset, scoped to this session.
+    /// Native only; the browser backend returns an error for this source.
     IonTerrain {
         asset_id: i64,
         imagery_asset_id: i64,
         access_token: String,
     },
     /// EPSG:4326/TMS quantized-mesh terrain and an optional matching imagery grid.
+    /// Matching imagery is supported by the browser backend. The native bridge
+    /// currently accepts this source only without an imagery overlay.
     Terrain {
         url: String,
         imagery: Option<GeographicImagery>,
