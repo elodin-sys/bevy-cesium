@@ -1,16 +1,26 @@
 {
-  description = "Standalone Cesium Native + Bevy development";
+  description = "Standalone Bevy terrain development for native and web targets";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay/c84e121aaede7ef8c7bd9fb5154ccc1599e07816";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
   outputs = {
     self,
     nixpkgs,
+    rust-overlay,
   }: let
     systems = ["aarch64-darwin" "x86_64-darwin" "x86_64-linux" "aarch64-linux"];
-    eachSystem = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs {inherit system;}));
+    eachSystem = f:
+      nixpkgs.lib.genAttrs systems (system:
+        f (import nixpkgs {
+          inherit system;
+          overlays = [rust-overlay.overlays.default];
+        }));
   in {
     devShells = eachSystem (pkgs: {
       default = pkgs.mkShell {
-        packages = with pkgs; [rustc cargo rustfmt clippy clang cmake ninja git pkg-config uv just curl zip unzip autoconf automake libtool perl bison nasm];
+        packages = with pkgs; [(rust-bin.fromRustupToolchainFile ./rust-toolchain.toml) trunk clang cmake ninja git pkg-config uv just curl zip unzip autoconf automake libtool perl bison nasm];
         buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [wayland libxkbcommon libX11 libXcursor libXi libXrandr vulkan-loader]);
         shellHook = ''
           export CARGO_BUILD_JOBS="''${CARGO_BUILD_JOBS:-2}"

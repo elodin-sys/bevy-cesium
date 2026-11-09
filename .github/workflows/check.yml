@@ -1,0 +1,44 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  loader:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install 1.98.0 --profile default
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: loader-linux-1.98-${{ hashFiles('Cargo.lock') }}
+      - run: cargo fmt --all --check
+      - run: cargo test --locked -p tiles-core
+      - run: cargo clippy --locked -p tiles-core --all-targets -- -D warnings
+      - name: Native library typecheck (without SDK linkage)
+        env:
+          DOCS_RS: "1"
+        run: cargo check --locked -p bevy-cesium --lib
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install 1.98.0 --profile minimal --target wasm32-unknown-unknown
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: browser-linux-1.98-${{ hashFiles('Cargo.lock') }}
+      - name: Link browser fixture without a Cesium Native SDK
+        run: cargo build --locked --profile wasm-release --target wasm32-unknown-unknown -p bevy-cesium --example browser

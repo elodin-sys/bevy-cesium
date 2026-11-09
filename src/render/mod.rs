@@ -17,7 +17,10 @@ mod contract;
 pub use contract::*;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
+#[cfg(target_family = "wasm")]
+use web_time::Instant;
 
 mod source;
 pub use source::{CesiumConfigError, CesiumSource, GeographicImagery};
@@ -58,13 +61,13 @@ impl Default for CesiumGeoreference {
     }
 }
 
-/// Native transform, retained in double precision for alternative spatial systems.
+/// Mesh-to-ECEF transform, retained in double precision for alternative spatial systems.
 #[derive(Component)]
 pub struct CesiumPrimitive {
     pub ecef_from_mesh: DMat4,
 }
 
-/// Native attribution HTML. The host must display it, preserving links/logos as
+/// Provider attribution HTML. The host must display it, preserving links/logos as
 /// required by its data provider. No application-specific UI is imposed here.
 #[derive(Resource, Default)]
 pub struct CesiumCredits {
@@ -164,6 +167,7 @@ impl<B: Backend> TilesPlugin<B> {
     /// Preserve acquired detail inside all selection views plus a spatial margin.
     /// Native retains refinement requirements, not just cached bytes. A positive
     /// margin enables retention; zero restores ordinary dynamic selection.
+    /// The browser backend supports only zero and rejects nonzero margins.
     pub fn with_lod_retention_margin(mut self, meters: f64) -> Self {
         self.options.lod_retention_margin = meters;
         self
@@ -233,7 +237,7 @@ fn replace_source<B: Backend>(
     options: Options,
     wait: bool,
 ) {
-    if let Some(previous) = world.remove_non_send_resource::<NativeSession<B>>() {
+    if let Some(previous) = world.remove_non_send::<NativeSession<B>>() {
         for entity in previous
             .tiles
             .values()
@@ -263,7 +267,7 @@ fn replace_source<B: Backend>(
         Err(BackendError("Invalid streaming options"))
     };
     match result {
-        Ok(session) => world.insert_non_send_resource(NativeSession {
+        Ok(session) => world.insert_non_send(NativeSession {
             session,
             tiles: HashMap::new(),
             replacements: HashMap::new(),

@@ -1,25 +1,50 @@
 [package]
 name = "bevy-cesium"
 publish = false
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Cesium Native streaming for Bevy"
+description = "Terrain and 3D Tiles streaming for Bevy on native and web targets"
 repository = "https://github.com/elodin-sys/bevy-cesium"
 documentation = "https://elodin-sys.github.io/bevy-cesium/bevy_cesium/"
 
+[workspace]
+members = ["crates/tiles-core"]
+resolver = "3"
+
 [dependencies]
-cxx = "1"
 bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "bevy_asset", "bevy_color", "bevy_camera", "bevy_image", "bevy_mesh", "bevy_render", "bevy_pbr", "bevy_log"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+cxx = "1"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tiles-core = { path = "crates/tiles-core" }
+web-time = "1.1"
 
 [build-dependencies]
 cxx-build = "1"
 
 [dev-dependencies]
-bevy = { version = "0.19.0", default-features = false, features = ["multi_threaded", "bevy_winit", "bevy_core_pipeline", "bevy_light", "bevy_shader", "bevy_window", "bevy_text", "bevy_ui", "bevy_ui_render", "default_font", "tonemapping_luts", "zstd_rust", "x11", "wayland", "png"] }
+tiles-core = { path = "crates/tiles-core" }
+bevy = { version = "0.19.0", default-features = false, features = ["bevy_winit", "bevy_core_pipeline", "bevy_light", "bevy_shader", "bevy_window", "bevy_text", "bevy_ui", "bevy_ui_render", "default_font", "tonemapping_luts", "zstd_rust", "png"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+bevy = { version = "0.19.0", default-features = false, features = ["multi_threaded", "x11", "wayland"] }
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+bevy = { version = "0.19.0", default-features = false, features = ["webgpu"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Url"] }
 
 [profile.dev]
 debug = 0
 
 [profile.release]
 debug = 0
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "thin"
+codegen-units = 16
+strip = "symbols"
