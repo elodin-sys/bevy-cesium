@@ -1,4 +1,5 @@
 /target/
+/web/dist/
 /result
 *.png
 .env

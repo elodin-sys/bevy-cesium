@@ -1,7 +1,9 @@
 # Bevy-Cesium
 
 Load real terrain, aerial imagery and 3D Tiles into a Bevy application.
-Cesium Native downloads and selects the data; Bevy renders it locally.
+Cesium Native downloads and selects the data on native targets. On
+`wasm32-unknown-unknown`, a Rust browser backend loads the data with Fetch.
+Both use the same Bevy renderer, coordinate adapter and GPU readiness tracking.
 
 Built for **Bevy 0.19** and **Cesium Native 0.65.0**. Experimental,
 maintained by Elodin independently of Cesium. Tested locally on Apple Silicon macOS.
@@ -11,7 +13,8 @@ maintained by Elodin independently of Cesium. Tested locally on Apple Silicon ma
 
 ## Structure
 
-One Rust crate: `bevy-cesium`. Three internal parts:
+One public crate, `bevy-cesium`, with an internal `tiles-core` loader for the browser.
+The native path has three parts:
 
 ```mermaid
 flowchart LR
@@ -24,6 +27,61 @@ flowchart LR
 ```
 
 Use a pinned Git commit or release tag. The crate is not published to crates.io.
+
+## Browser
+
+`CesiumPlugin` selects its backend by target: Cesium Native on native platforms,
+`BrowserBackend` on WASM. No Cargo feature is needed. The browser build does not
+compile the C++ bridge or link a Cesium Native SDK.
+
+From the repository root:
+
+```sh
+nix develop
+just install web
+just web
+```
+
+Open `http://127.0.0.1:8842`. The small fixture loads its tileset and geometry
+from relative HTTP paths on that server and reports when the GPU is ready.
+It needs WebGPU, but no ion account, token, external tiles or application backend.
+
+Applications pass `CesiumSource::Url` or `CesiumSource::Terrain` an absolute HTTP(S)
+URL. Child content URLs are resolved relative to their tileset/layer URL; serving
+the same directory from a database asset server requires no database-specific
+code here. The server must allow browser access (same origin or suitable CORS).
+`file:` URLs are not supported by browser Fetch. The host supplies ion tokens
+explicitly through `CesiumSource::Ion`; there is no global JavaScript token or
+demo account in the library.
+
+| Capability | Native | Browser |
+| --- | --- | --- |
+| Explicit 3D Tiles, nested tilesets, glTF/GLB and Draco mesh decoding | Yes | Yes |
+| Ion 3D Tiles source | Yes | Yes |
+| Quantized-mesh terrain URL | Yes | Yes |
+| Geographic TMS imagery on a terrain URL | Not exposed by the bridge | Yes |
+| `IonTerrain` with ion imagery | Yes | Not yet; returns an error |
+| LOD retention margin | Yes | Not yet; nonzero margins return an error |
+| Terrain height sampling (`TerrainSampler`) | Yes | Not exposed |
+| Persistent local HTTP cache | Yes | Browser HTTP caching only |
+
+Browser terrain layers must use EPSG:4326/TMS and static availability for levels
+above 6 (maximum level 24). Dynamic metadata availability and parent layers are
+not supported. Imagery must match the terrain's geographic tile grid; arbitrary
+imagery services are not reprojected. Unsupported layers return an error.
+
+The browser loader is a bounded subset, not a port of all Cesium Native formats.
+It fetches at most four tile jobs concurrently, bounds each response to 32 MiB,
+and limits hierarchy size/depth. The unused-tile cache budget does not cap active
+tiles, decode allocations, or GPU memory. Decoding currently runs on the browser
+thread. The host should set a startup timeout and report errors through
+`CesiumStatus`; there is no silent fallback to a different terrain source.
+
+This integrates the backend from the
+[terrain demo](https://github.com/elodin-sys/elodin-terrain-demo/tree/1896eac25355841dd725013e9579b95680be6162/browser-backend),
+without its deployment configuration or Falcon9-specific changes.
+Preparing portable terrain packages and connecting an editor to a database
+remain application responsibilities.
 
 ## Demo
 
