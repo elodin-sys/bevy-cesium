@@ -8,7 +8,6 @@ Experimental, maintained by Elodin independently of Cesium.
 Use a pinned Git commit or release tag; the crate is not published to crates.io.
 
 [Native API](https://elodin-sys.github.io/bevy-cesium/bevy_cesium/)
-· [Browser API](https://elodin-sys.github.io/bevy-cesium/wasm/bevy_cesium/)
 · [Examples](examples)
 
 ## Try it
