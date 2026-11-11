@@ -43,6 +43,12 @@ native SDK.
 
 ## Use it
 
+Pin the release in your application's `Cargo.toml`:
+
+```toml
+bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.0" }
+```
+
 Add `CesiumPlugin`, mark your cameras with `CesiumCamera`, and set
 `CesiumGeoreference` to map ECEF (Earth-centered, Earth-fixed) coordinates into
 your scene. Your application supplies lighting and displays `CesiumCredits`,
