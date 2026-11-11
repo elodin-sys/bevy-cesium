@@ -1,12 +1,27 @@
 use crate::{native, render};
 use render::{Backend, BackendError, Frame, Options, Primitive, Tile};
-/// Bevy plugin backed by Cesium Native. Use its builder methods to configure
+/// Native Bevy plugin: Cesium Native for live sources, Rust for prepared packages.
+/// Use its builder methods to configure
 /// detail, retention and the initial loading wait before adding it to your app.
 pub type CesiumPlugin = render::TilesPlugin<NativeBackend>;
-pub struct NativeBackend(native::Session);
+pub enum NativeBackend {
+    Native(native::Session),
+    Prepared(Box<crate::browser::BrowserBackend>),
+}
 impl Backend for NativeBackend {
     fn open(source: &render::CesiumSource, options: Options) -> Result<Self, BackendError> {
+        if matches!(source, render::CesiumSource::Prepared { .. }) {
+            return crate::browser::BrowserBackend::open(
+                source,
+                Options {
+                    lod_retention_margin: 0.0,
+                    ..options
+                },
+            )
+            .map(|backend| Self::Prepared(Box::new(backend)));
+        }
         let mut session = match source {
+            render::CesiumSource::Prepared { .. } => unreachable!("prepared source handled above"),
             render::CesiumSource::Url(url) => native::Session::open_url(url),
             render::CesiumSource::Terrain { url, imagery: None } => native::Session::open_url(url),
             render::CesiumSource::Terrain {
@@ -36,13 +51,17 @@ impl Backend for NativeBackend {
         session
             .configure_retention(options.lod_retention_margin)
             .map_err(|_| BackendError("Invalid LOD retention margin"))?;
-        Ok(Self(session))
+        Ok(Self::Native(session))
     }
     fn update(
         &mut self,
         views: &[render::CesiumView],
         seconds: f32,
     ) -> Result<Frame, BackendError> {
+        let session = match self {
+            Self::Prepared(backend) => return backend.update(views, seconds),
+            Self::Native(session) => session,
+        };
         let views: Vec<_> = views
             .iter()
             .map(|v| native::View {
@@ -55,8 +74,7 @@ impl Backend for NativeBackend {
                 vertical_fov: v.vertical_fov,
             })
             .collect();
-        let f = self
-            .0
+        let f = session
             .update(&views, seconds)
             .map_err(|_| BackendError("Could not update tileset"))?;
         Ok(Frame {

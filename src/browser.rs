@@ -21,6 +21,10 @@ impl Backend for BrowserBackend {
                     "Ion terrain with imagery is not supported by the browser backend",
                 ));
             }
+            CesiumSource::Prepared {
+                url,
+                ion_access_token,
+            } => tiles_core::Session::open_prepared(url, ion_access_token.as_deref()),
             CesiumSource::Url(url) => tiles_core::Session::open_url(url),
             CesiumSource::Ion {
                 asset_id,

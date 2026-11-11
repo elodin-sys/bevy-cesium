@@ -11,6 +11,7 @@ pub(crate) struct Loader(
     Arc<Mutex<Option<Ion>>>,
     Arc<Mutex<Vec<String>>>,
     Arc<Option<crate::terrain::Imagery>>,
+    Arc<Mutex<Option<crate::package::Package>>>,
 );
 impl Default for Loader {
     fn default() -> Self {
@@ -22,10 +23,68 @@ impl Default for Loader {
             Arc::default(),
             Arc::default(),
             Arc::default(),
+            Arc::default(),
         )
     }
 }
 impl Loader {
+    pub(crate) fn prepared(package: crate::package::Package) -> Self {
+        Self {
+            4: Arc::new(Mutex::new(Some(package))),
+            ..Self::default()
+        }
+    }
+    fn prepared_root(&self, url: Url) -> Result<Url> {
+        let manifest_url = self
+            .4
+            .lock()
+            .map_err(|_| Error("Package unavailable"))?
+            .as_ref()
+            .filter(|p| p.token.is_some())
+            .map(|p| p.local("package.json"))
+            .transpose()?;
+        let Some(manifest_url) = manifest_url else {
+            return Ok(url);
+        };
+        let bytes = fetch_restricted(&self.0, &manifest_url, None, true)?;
+        self.4
+            .lock()
+            .map_err(|_| Error("Package unavailable"))?
+            .as_mut()
+            .ok_or(Error("Package unavailable"))?
+            .install(&bytes)
+    }
+    fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
+        // Serialize grant creation: concurrent cache misses share one session.
+        let mut state = self.4.lock().map_err(|_| Error("Package unavailable"))?;
+        let package = state.as_mut().ok_or(Error("Package unavailable"))?;
+        if package.credentials.is_none() || refresh {
+            let manifest = package
+                .manifest
+                .as_ref()
+                .ok_or(Error("Missing package manifest"))?;
+            let ion = Ion::new(
+                manifest.ion_asset_id,
+                package.token.as_deref().ok_or(Error("Offline terrain"))?,
+            )?;
+            let grant = Grant::parse(&fetch_authorized(&self.0, &ion.endpoint, Some(&ion.token))?)?;
+            crate::package::canonical(&grant.url)?;
+            let bytes = fetch_restricted(&self.0, &grant.url, None, true)?;
+            package.credentials = Some(crate::package::GoogleSession::from_root(
+                &grant.url, &bytes,
+            )?);
+            self.2
+                .lock()
+                .map_err(|_| Error("Credits unavailable"))?
+                .extend(grant.credits);
+        }
+        package
+            .credentials
+            .as_ref()
+            .ok_or(Error("Missing Photo 3D session"))?
+            .authorize(url)
+    }
+
     pub(crate) fn with_imagery(mut self, imagery: Option<crate::terrain::Imagery>) -> Self {
         self.3 = Arc::new(imagery);
         self
@@ -34,6 +93,7 @@ impl Loader {
         Self(
             Self::default().0,
             Arc::new(Mutex::new(Some(ion))),
+            Arc::default(),
             Arc::default(),
             Arc::default(),
         )
@@ -68,6 +128,40 @@ impl Loader {
         Ok(grant.url.clone())
     }
     fn fetch(&self, url: &Url) -> Result<Vec<u8>> {
+        let request = self
+            .4
+            .lock()
+            .map_err(|_| Error("Package unavailable"))?
+            .as_ref()
+            .map(|p| p.request(url))
+            .transpose()?;
+        if let Some(request) = request {
+            let remote = match request {
+                crate::package::Request::Local(local) => {
+                    return fetch_restricted(&self.0, &local, None, true);
+                }
+                crate::package::Request::Cached { local, remote } => {
+                    match fetch_restricted(&self.0, &local, None, true) {
+                        Ok(bytes) => return Ok(bytes),
+                        Err(Error("HTTP not found" | "File not found")) => remote,
+                        Err(error) => return Err(error),
+                    }
+                }
+                crate::package::Request::Provider(remote) => remote,
+            };
+            let authorized = self.provider_url(&remote, false)?;
+            let result = fetch_restricted(&self.0, &authorized, None, true);
+            if matches!(
+                result,
+                Err(Error("HTTP unauthorized" | "HTTP access denied"))
+            ) {
+                let refreshed = self.provider_url(&remote, true)?;
+                return fetch_restricted(&self.0, &refreshed, None, true);
+            } else {
+                return result;
+            }
+        }
+
         let token = {
             let state = self.1.lock().map_err(|_| Error("Ion state unavailable"))?;
             state
@@ -111,20 +205,23 @@ impl Loader {
     pub(crate) fn load_root(&self, url: Option<Url>, sender: SyncSender<Completion>) {
         let loader = self.clone();
         std::thread::spawn(move || {
-            let result = loader.root_url(url).and_then(|url| {
-                loader.fetch(&url).and_then(|b| {
-                    loader
-                        .2
-                        .lock()
-                        .map_err(|_| Error("Credits unavailable"))?
-                        .extend(crate::root_credits(&b, &url));
-                    let nodes = parse_root(&b, &url)?;
-                    if loader.3.is_some() && nodes.iter().all(|n| n.terrain.is_none()) {
-                        return Err(Error("Imagery overlay requires a terrain layer"));
-                    }
-                    Ok(nodes)
-                })
-            });
+            let result = loader
+                .root_url(url)
+                .and_then(|url| loader.prepared_root(url))
+                .and_then(|url| {
+                    loader.fetch(&url).and_then(|b| {
+                        loader
+                            .2
+                            .lock()
+                            .map_err(|_| Error("Credits unavailable"))?
+                            .extend(crate::root_credits(&b, &url));
+                        let nodes = parse_root(&b, &url)?;
+                        if loader.3.is_some() && nodes.iter().all(|n| n.terrain.is_none()) {
+                            return Err(Error("Imagery overlay requires a terrain layer"));
+                        }
+                        Ok(nodes)
+                    })
+                });
             let _ = sender.send(Completion::Root(result));
         });
     }
@@ -181,13 +278,27 @@ pub(crate) fn fetch(agent: &ureq::Agent, url: &Url) -> Result<Vec<u8>> {
     fetch_authorized(agent, url, None)
 }
 fn fetch_authorized(agent: &ureq::Agent, url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
+    fetch_restricted(agent, url, token, false)
+}
+fn fetch_restricted(
+    agent: &ureq::Agent,
+    url: &Url,
+    token: Option<&str>,
+    strict: bool,
+) -> Result<Vec<u8>> {
     use std::io::Read;
     const MAX: u64 = 32 * 1024 * 1024;
     let mut bytes = Vec::new();
     if url.scheme() == "file" {
         let p = url.to_file_path().map_err(|_| Error("Invalid file URL"))?;
         std::fs::File::open(p)
-            .map_err(|_| Error("File not found"))?
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    Error("File not found")
+                } else {
+                    Error("File access failed")
+                }
+            })?
             .take(MAX + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| Error("File read failed"))?;
@@ -196,7 +307,7 @@ fn fetch_authorized(agent: &ureq::Agent, url: &Url, token: Option<&str>) -> Resu
             "Accept",
             "application/vnd.quantized-mesh,application/octet-stream;q=0.9,application/json;q=0.8",
         );
-        if token.is_some() || crate::google_url(url) {
+        if strict || token.is_some() || crate::google_url(url) {
             request = request
                 .config()
                 .max_redirects(0)
@@ -209,6 +320,7 @@ fn fetch_authorized(agent: &ureq::Agent, url: &Url, token: Option<&str>) -> Resu
         let mut response = request.call().map_err(|e| match e {
             ureq::Error::StatusCode(401) => Error("HTTP unauthorized"),
             ureq::Error::StatusCode(403) => Error("HTTP access denied"),
+            ureq::Error::StatusCode(404) => Error("HTTP not found"),
             _ => Error("HTTP request failed"),
         })?;
         if !response.status().is_success() {
@@ -233,6 +345,126 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::Instant;
+
+    #[test]
+    fn offline_assets_reject_redirects_and_external_references() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let root = Url::parse(&format!(
+            "http://{}/package/tileset.json",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let loader = Loader::prepared(crate::package::Package::new(&root, None).unwrap());
+        listener.set_nonblocking(true).unwrap();
+        assert!(
+            loader
+                .fetch(&root.join("../outside.json").unwrap())
+                .is_err()
+        );
+        assert!(
+            listener.accept().is_err(),
+            "offline package escaped its asset directory"
+        );
+        listener.set_nonblocking(false).unwrap();
+        let location = root.join("../outside.json").unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            write!(stream, "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            drop(stream);
+            listener.set_nonblocking(true).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(
+                listener.accept().is_err(),
+                "offline asset redirect was followed"
+            );
+        });
+        assert!(loader.fetch(&root).is_err());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn only_missing_hybrid_files_fall_back_to_the_provider() {
+        for (status, expected) in [
+            (404, "Invalid ion asset or token"),
+            (403, "HTTP access denied"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let root = Url::parse(&format!(
+                "http://{}/package/tileset.json",
+                listener.local_addr().unwrap()
+            ))
+            .unwrap();
+            let remote = Url::parse("https://tile.googleapis.com/v1/3dtiles/root.json").unwrap();
+            let mut package = crate::package::Package::new(&root, Some("unused")).unwrap();
+            package.install(&serde_json::to_vec(&serde_json::json!({"version":1,"ion_asset_id":2275207,"root":remote.as_str(),"resources":{remote.as_str():"source/root.json"}})).unwrap()).unwrap();
+            // Fail at provider credential validation, before any external request.
+            // This distinguishes fallback from an error returned by the asset host.
+            package.token = Some("\n".into());
+            let loader = Loader::prepared(package);
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0; 4096];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            });
+            assert_eq!(loader.fetch(&remote).unwrap_err().0, expected);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn hybrid_reads_cached_resources_without_contacting_ion() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let root = Url::parse(&format!(
+            "http://{}/package/tileset.json",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let loader = Loader::prepared(
+            crate::package::Package::new(&root, Some("invalid-token-must-never-be-used")).unwrap(),
+        );
+        let remote = "https://tile.googleapis.com/v1/3dtiles/root.json";
+        let server = std::thread::spawn(move || {
+            for (path, body) in [
+                ("/package/package.json", serde_json::json!({"version":1,"ion_asset_id":2275207,"root":remote,"resources":{(remote):"source/root.json"}}).to_string()),
+                ("/package/source/root.json", "cached root".to_owned()),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut bytes = [0; 4096];
+                let count = stream.read(&mut bytes).unwrap();
+                let request = std::str::from_utf8(&bytes[..count]).unwrap();
+                assert!(request.starts_with(&format!("GET {path} ")));
+                assert!(!request.contains("invalid-token"));
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+        });
+        let source = loader.prepared_root(root).unwrap();
+        assert_eq!(loader.fetch(&source).unwrap(), b"cached root");
+        assert!(
+            loader
+                .4
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .credentials
+                .is_none()
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn authenticated_redirect_is_not_followed() {
