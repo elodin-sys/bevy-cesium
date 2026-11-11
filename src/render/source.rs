@@ -1,6 +1,12 @@
 /// Source credentials are intentionally not Debug or Reflect.
 pub enum CesiumSource {
     Url(String),
+    /// Prepared package: no provider traffic without a token. Hybrid mode reads
+    /// the sibling package.json and resolves cache misses through Photo 3D.
+    Prepared {
+        url: String,
+        ion_access_token: Option<String>,
+    },
     Ion {
         asset_id: i64,
         access_token: String,
@@ -42,6 +48,15 @@ impl CesiumSource {
     pub(crate) fn valid(&self) -> bool {
         match self {
             Self::Url(url) => !url.trim().is_empty(),
+            Self::Prepared {
+                url,
+                ion_access_token,
+            } => {
+                !url.trim().is_empty()
+                    && ion_access_token
+                        .as_ref()
+                        .is_none_or(|t| !t.trim().is_empty() && !t.contains(['\r', '\n']))
+            }
             Self::Terrain { url, imagery } => {
                 !url.trim().is_empty()
                     && imagery.as_ref().is_none_or(|i| {

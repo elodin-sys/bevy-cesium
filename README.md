@@ -2,7 +2,8 @@
 
 Stream terrain, aerial imagery and 3D Tiles into **Bevy 0.19**.
 Native applications use **Cesium Native 0.65.0**; browser applications use a
-Rust/Fetch loader. Both share the same Bevy renderer and coordinate API.
+Rust/Fetch loader. Prepared packages use the Rust loader on both platforms.
+Both share the same Bevy renderer and coordinate API.
 
 Experimental, maintained by Elodin independently of Cesium.
 Use a pinned Git commit or release tag; the crate is not published to crates.io.
@@ -93,6 +94,19 @@ Pass an absolute HTTP(S) URL to `CesiumSource::Url` or `CesiumSource::Terrain` i
 the browser. Child URLs resolve relative to the tileset/layer URL. Assets must be
 served from the same origin or allow CORS; browser Fetch cannot read `file:` URLs.
 Supply ion credentials explicitly through the source configuration.
+
+Use `CesiumSource::Prepared { url, ion_access_token: None }` for an offline
+package. Resources must remain within its directory; provider requests and
+redirects are rejected. An HTTP-hosted package still needs access to its asset
+server.
+
+For cache-first Photo 3D streaming, supply an ion token and a sibling
+`package.json` manifest. Cached resources are read first; missing tiles use a
+fresh provider session. Tokens and provider sessions are not stored in the
+package. Downloads remain transient and do not update the package. Prepared
+sources use the Rust loader's limits and disable native LOD retention.
+They display available cached detail immediately, even with initial-load waiting
+enabled; `ready_for_capture()` still waits for a complete, error-free selection.
 
 Browser terrain requires EPSG:4326/TMS, a maximum level of 24 and static
 availability above level 6. Dynamic metadata availability and parent layers are

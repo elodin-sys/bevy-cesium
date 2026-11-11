@@ -3,6 +3,7 @@
 mod content;
 mod geography;
 mod ion;
+mod package;
 pub mod terrain;
 #[cfg(test)]
 mod tests;
@@ -132,6 +133,8 @@ pub struct Session {
     rx: mpsc::Receiver<Completion>,
     pending: HashSet<usize>,
     failed: HashSet<usize>,
+    retry_after: HashMap<usize, f64>,
+    elapsed: f64,
     resident: HashMap<usize, (usize, u64)>,
     tile_credits: HashMap<usize, Vec<String>>,
     clock: u64,
@@ -143,6 +146,14 @@ pub struct Session {
     pub cache_bytes: usize,
 }
 impl Session {
+    /// Prepared assets stay within their package directory. An ion token enables
+    /// cache-first Photo 3D fallback using a sibling `package.json` manifest.
+    pub fn open_prepared(source: &str, ion_token: Option<&str>) -> Result<Self> {
+        let url = Url::parse(source).map_err(|_| Error("Invalid prepared source URL"))?;
+        let package = package::Package::new(&url, ion_token)?;
+        Self::start(transport::Loader::prepared(package), Some(url))
+    }
+
     pub fn open_terrain_url(source: &str, imagery: Option<terrain::Imagery>) -> Result<Self> {
         let url = Url::parse(source).map_err(|_| Error("Invalid terrain URL"))?;
         if !matches!(url.scheme(), "https" | "http" | "file") {
@@ -176,6 +187,8 @@ impl Session {
             rx,
             pending: HashSet::new(),
             failed: HashSet::new(),
+            retry_after: HashMap::new(),
+            elapsed: 0.0,
             resident: HashMap::new(),
             tile_credits: HashMap::new(),
             clock: 0,
@@ -203,6 +216,15 @@ impl Session {
             return Err(Error("Invalid camera or screen error"));
         }
         self.clock += 1;
+        self.elapsed += f64::from(seconds);
+        self.retry_after.retain(|id, deadline| {
+            if self.elapsed >= *deadline {
+                self.failed.remove(id);
+                false
+            } else {
+                true
+            }
+        });
         let mut frame = Frame {
             credits: self.client.credits(),
             ..Frame::default()
@@ -250,6 +272,9 @@ impl Session {
                             frame.error = Some(e.0);
                             eprintln!("3D Tiles tile {id}: {e}");
                             self.failed.insert(id);
+                            if e.0.starts_with("HTTP") {
+                                self.retry_after.insert(id, self.elapsed + 10.0);
+                            }
                             self.stats.failed_tiles += 1;
                         }
                     }
