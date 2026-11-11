@@ -13,20 +13,19 @@ members = ["crates/tiles-core"]
 resolver = "3"
 
 [dependencies]
+tiles-core = { path = "crates/tiles-core" }
 bevy = { version = "0.19.0", default-features = false, features = ["std", "async_executor", "bevy_asset", "bevy_color", "bevy_camera", "bevy_image", "bevy_mesh", "bevy_render", "bevy_pbr", "bevy_log"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cxx = "1"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tiles-core = { path = "crates/tiles-core" }
 web-time = "1.1"
 
 [build-dependencies]
 cxx-build = "1"
 
 [dev-dependencies]
-tiles-core = { path = "crates/tiles-core" }
 bevy = { version = "0.19.0", default-features = false, features = ["bevy_winit", "bevy_core_pipeline", "bevy_light", "bevy_shader", "bevy_window", "bevy_text", "bevy_ui", "bevy_ui_render", "default_font", "tonemapping_luts", "zstd_rust", "png"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]

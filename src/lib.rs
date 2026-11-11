@@ -36,7 +36,6 @@
 
 #[cfg(not(target_family = "wasm"))]
 mod backend;
-#[cfg(any(target_family = "wasm", test))]
 mod browser;
 mod render;
 #[cfg(not(target_family = "wasm"))]
