@@ -1,11 +1,12 @@
 use crate::{native, render};
 use render::{Backend, BackendError, Frame, Options, Primitive, Tile};
-/// Bevy plugin backed by Cesium Native. Use its builder methods to configure
+/// Native Bevy plugin: Cesium Native for live sources, Rust for prepared packages.
+/// Use its builder methods to configure
 /// detail, retention and the initial loading wait before adding it to your app.
 pub type CesiumPlugin = render::TilesPlugin<NativeBackend>;
 pub enum NativeBackend {
     Native(native::Session),
-    Prepared(crate::browser::BrowserBackend),
+    Prepared(Box<crate::browser::BrowserBackend>),
 }
 impl Backend for NativeBackend {
     fn open(source: &render::CesiumSource, options: Options) -> Result<Self, BackendError> {
@@ -17,7 +18,7 @@ impl Backend for NativeBackend {
                     ..options
                 },
             )
-            .map(Self::Prepared);
+            .map(|backend| Self::Prepared(Box::new(backend)));
         }
         let mut session = match source {
             render::CesiumSource::Prepared { .. } => unreachable!("prepared source handled above"),
