@@ -208,6 +208,8 @@ fn session() -> Session {
         rx,
         pending: HashSet::new(),
         failed: HashSet::new(),
+        retry_after: HashMap::new(),
+        elapsed: 0.0,
         resident: HashMap::new(),
         tile_credits: HashMap::new(),
         clock: 0,
@@ -218,6 +220,23 @@ fn session() -> Session {
         maximum_screen_error: 16.,
         cache_bytes: 1024,
     }
+}
+#[test]
+fn transient_failures_retry_after_delay_but_invalid_content_stays_failed() {
+    let mut s = session();
+    s.tx.send(Completion::Content(0, Err(Error("HTTP request failed")), 0))
+        .unwrap();
+    s.update(&[], 0.).unwrap();
+    assert!(s.failed.contains(&0));
+    s.update(&[], 9.).unwrap();
+    assert!(s.failed.contains(&0));
+    s.update(&[], 1.).unwrap();
+    assert!(!s.failed.contains(&0));
+    s.tx.send(Completion::Content(0, Err(Error("Invalid glTF")), 0))
+        .unwrap();
+    s.update(&[], 0.).unwrap();
+    s.update(&[], 30.).unwrap();
+    assert!(s.failed.contains(&0));
 }
 #[test]
 fn camera_validation_and_sse() {

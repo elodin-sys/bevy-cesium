@@ -1,8 +1,7 @@
 # tiles-core
 
-Internal Rust loader for the Bevy-Cesium browser backend. Native Bevy-Cesium
-continues to use Cesium Native; this crate's native transport exists for
-deterministic loader tests.
+Internal Rust loader for the Bevy-Cesium browser backend and prepared packages
+on native platforms. Other native sources continue to use Cesium Native.
 
 Imported from `vendor/tiles-core` in
 [`elodin-terrain-demo` at 1896eac25355841dd725013e9579b95680be6162](https://github.com/elodin-sys/elodin-terrain-demo/tree/1896eac25355841dd725013e9579b95680be6162/vendor/tiles-core).

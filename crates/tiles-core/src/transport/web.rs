@@ -16,9 +16,64 @@ pub(crate) struct Loader(
     Rc<RefCell<Option<Ion>>>,
     Rc<RefCell<Vec<String>>>,
     Rc<Option<crate::terrain::Imagery>>,
+    Rc<RefCell<Option<crate::package::Package>>>,
 );
 
 impl Loader {
+    pub(crate) fn prepared(package: crate::package::Package) -> Self {
+        Self {
+            3: Rc::new(RefCell::new(Some(package))),
+            ..Self::default()
+        }
+    }
+    async fn prepared_root(&self, url: Url) -> Result<Url> {
+        let manifest_url = self
+            .3
+            .borrow()
+            .as_ref()
+            .filter(|p| p.token.is_some())
+            .map(|p| p.local("package.json"))
+            .transpose()?;
+        let Some(manifest_url) = manifest_url else {
+            return Ok(url);
+        };
+        let bytes = fetch_restricted(&manifest_url, None, true).await?;
+        self.3
+            .borrow_mut()
+            .as_mut()
+            .ok_or(Error("Package unavailable"))?
+            .install(&bytes)
+    }
+    async fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
+        let ion = {
+            let state = self.3.borrow();
+            let package = state.as_ref().ok_or(Error("Package unavailable"))?;
+            if !refresh && let Some(credentials) = &package.credentials {
+                return credentials.authorize(url);
+            }
+            let manifest = package
+                .manifest
+                .as_ref()
+                .ok_or(Error("Missing package manifest"))?;
+            Ion::new(
+                manifest.ion_asset_id,
+                package.token.as_deref().ok_or(Error("Offline terrain"))?,
+            )?
+        };
+        let grant = Grant::parse(&fetch_authorized(&ion.endpoint, Some(&ion.token)).await?)?;
+        crate::package::canonical(&grant.url)?;
+        let bytes = fetch_restricted(&grant.url, None, true).await?;
+        let credentials = crate::package::GoogleSession::from_root(&grant.url, &bytes)?;
+        let authorized = credentials.authorize(url)?;
+        self.3
+            .borrow_mut()
+            .as_mut()
+            .ok_or(Error("Package unavailable"))?
+            .credentials = Some(credentials);
+        self.1.borrow_mut().extend(grant.credits);
+        Ok(authorized)
+    }
+
     pub(crate) fn with_imagery(mut self, imagery: Option<crate::terrain::Imagery>) -> Self {
         self.2 = Rc::new(imagery);
         self
@@ -26,6 +81,7 @@ impl Loader {
     pub(crate) fn ion(ion: Ion) -> Self {
         Self(
             Rc::new(RefCell::new(Some(ion))),
+            Rc::default(),
             Rc::default(),
             Rc::default(),
         )
@@ -59,6 +115,39 @@ impl Loader {
         Ok(url)
     }
     async fn fetch(&self, url: &Url) -> Result<Vec<u8>> {
+        let request = self
+            .3
+            .borrow()
+            .as_ref()
+            .map(|p| p.request(url))
+            .transpose()?;
+        if let Some(request) = request {
+            let remote = match request {
+                crate::package::Request::Local(local) => {
+                    return fetch_restricted(&local, None, true).await;
+                }
+                crate::package::Request::Cached { local, remote } => {
+                    match fetch_restricted(&local, None, true).await {
+                        Ok(bytes) => return Ok(bytes),
+                        Err(Error("HTTP not found")) => remote,
+                        Err(error) => return Err(error),
+                    }
+                }
+                crate::package::Request::Provider(remote) => remote,
+            };
+            let authorized = self.provider_url(&remote, false).await?;
+            let result = fetch_restricted(&authorized, None, true).await;
+            if matches!(
+                result,
+                Err(Error("HTTP unauthorized" | "HTTP access denied"))
+            ) {
+                let refreshed = self.provider_url(&remote, true).await?;
+                return fetch_restricted(&refreshed, None, true).await;
+            } else {
+                return result;
+            }
+        }
+
         let token = self
             .0
             .borrow()
@@ -99,6 +188,7 @@ impl Loader {
                     Some(url) => url,
                     None => loader.refresh().await?,
                 };
+                let url = loader.prepared_root(url).await?;
                 loader.fetch(&url).await.and_then(|b| {
                     loader.1.borrow_mut().extend(crate::root_credits(&b, &url));
                     let nodes = parse_root(&b, &url)?;
@@ -211,6 +301,9 @@ impl Drop for FetchGuard {
 }
 
 async fn fetch_authorized(url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
+    fetch_restricted(url, token, false).await
+}
+async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Result<Vec<u8>> {
     const MAX: usize = 32 * 1024 * 1024;
     if !matches!(url.scheme(), "https" | "http") {
         return Err(Error("Browser sources must use HTTP or HTTPS"));
@@ -223,7 +316,7 @@ async fn fetch_authorized(url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
     };
     let init = RequestInit::new();
     init.set_mode(RequestMode::Cors);
-    if token.is_some() || crate::google_url(url) {
+    if strict || token.is_some() || crate::google_url(url) {
         init.set_redirect(web_sys::RequestRedirect::Error);
     }
     init.set_signal(Some(&guard.controller.signal()));
@@ -253,6 +346,9 @@ async fn fetch_authorized(url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
     }
     if response.status() == 403 {
         return Err(Error("HTTP access denied"));
+    }
+    if response.status() == 404 {
+        return Err(Error("HTTP not found"));
     }
     if !response.ok() {
         return Err(Error("HTTP status error"));

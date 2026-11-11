@@ -274,7 +274,9 @@ fn replace_source<B: Backend>(
             selected: HashSet::new(),
             published: HashSet::new(),
             removed: HashSet::new(),
-            waiting_for_initial_load: wait,
+            // A prepared replay can show cached detail while optional provider
+            // refinement is pending or unavailable.
+            waiting_for_initial_load: wait && !matches!(source, CesiumSource::Prepared { .. }),
         }),
         Err(error) => {
             let mut status = world.resource_mut::<CesiumStatus>();
@@ -915,6 +917,30 @@ mod tests {
             .map(|(e, _)| e)
             .collect()
     }
+    #[test]
+    fn prepared_source_publishes_cached_detail_even_when_refinement_fails() {
+        let mut app = controlled_app_with_startup_wait(true);
+        app.insert_resource(CesiumSourceUpdate(Some(CesiumSource::Prepared {
+            url: "https://assets.example/f9/tileset.json".into(),
+            ion_access_token: Some("unused".into()),
+        })));
+        app.update();
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        acknowledge(&mut app, 1);
+        app.world_mut()
+            .non_send_mut::<NativeSession<ControlledBackend>>()
+            .session
+            .next = Frame {
+            visible: vec![1],
+            load_failed: true,
+            error: Some("HTTP request failed"),
+            ..default()
+        };
+        app.update();
+        assert_eq!(visible_entities(&mut app).len(), 1);
+        assert!(app.world().resource::<CesiumStatus>().load_failed);
+    }
+
     #[test]
     fn startup_wait_hides_coarse_terrain_until_complete_and_gpu_ready_only_once() {
         let mut app = controlled_app_with_startup_wait(true);
