@@ -3,12 +3,23 @@ use base64::Engine;
 use glam::{DMat4, DVec3, Vec3};
 use url::Url;
 
+#[cfg(test)]
 pub(crate) fn external_tree(
     bytes: &[u8],
     tile: DMat4,
     add: bool,
     depth: usize,
     url: &Url,
+) -> Result<Option<Vec<crate::Node>>> {
+    external_tree_on(bytes, tile, add, depth, url, crate::Ellipsoid::WGS84)
+}
+pub(crate) fn external_tree_on(
+    bytes: &[u8],
+    tile: DMat4,
+    add: bool,
+    depth: usize,
+    url: &Url,
+    ellipsoid: crate::Ellipsoid,
 ) -> Result<Option<Vec<crate::Node>>> {
     if bytes.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
         return Ok(None);
@@ -18,7 +29,7 @@ pub(crate) fn external_tree(
     if value.get("root").is_none() {
         return Ok(None);
     }
-    crate::tree::parse_tileset_at(bytes, url, tile, add, depth + 1).map(Some)
+    crate::tree::parse_tileset_at(bytes, url, tile, add, depth + 1, ellipsoid).map(Some)
 }
 
 pub(crate) fn credits(bytes: &[u8]) -> Result<Vec<String>> {

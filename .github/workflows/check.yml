@@ -42,3 +42,5 @@ jobs:
           key: browser-linux-1.98-${{ hashFiles('Cargo.lock') }}
       - name: Link browser fixture without a Cesium Native SDK
         run: cargo build --locked --profile wasm-release --target wasm32-unknown-unknown -p bevy-cesium --example browser
+      - name: Link planetary fixture without a Cesium Native SDK
+        run: cargo build --locked --profile wasm-release --target wasm32-unknown-unknown -p bevy-cesium --example planetary

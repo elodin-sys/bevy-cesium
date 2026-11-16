@@ -10,6 +10,8 @@ impl std::fmt::Display for BackendError {
 impl std::error::Error for BackendError {}
 #[derive(Clone, Copy)]
 pub struct Options {
+    /// Reference body used for geographic terrain and region bounds.
+    pub ellipsoid: tiles_core::Ellipsoid,
     /// Evict unused tiles when over budget; active tiles and GPU allocations are not capped.
     pub unused_cache_bytes: usize,
     /// Refinement threshold in physical screen pixels.
@@ -21,6 +23,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            ellipsoid: tiles_core::Ellipsoid::WGS84,
             unused_cache_bytes: 256 * 1024 * 1024,
             maximum_screen_error: 16.0,
             lod_retention_margin: 0.0,
