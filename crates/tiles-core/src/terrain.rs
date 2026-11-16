@@ -1,8 +1,5 @@
 //! Bounded quantized-mesh terrain. Static availability, EPSG:4326/TMS.
-use crate::{
-    Error, Node, Primitive, Result,
-    geography::{A, ecef, region_sphere},
-};
+use crate::{Ellipsoid, Error, Node, Primitive, Result};
 use glam::{DMat4, DVec3, Vec3};
 use serde::Deserialize;
 use std::{
@@ -101,7 +98,11 @@ struct Rectangle {
     end_y: u32,
 }
 
+#[cfg(test)]
 pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
+    layer_on(bytes, base, Ellipsoid::WGS84)
+}
+pub(crate) fn layer_on(bytes: &[u8], base: &Url, ellipsoid: Ellipsoid) -> Result<Vec<Node>> {
     let l: Layer = serde_json::from_slice(bytes).map_err(|_| Error("Invalid terrain layer"))?;
     if l.format != "quantized-mesh-1.0"
         || l.projection.as_deref().is_some_and(|p| p != "EPSG:4326")
@@ -168,8 +169,8 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
         depth: 0,
         transform: DMat4::IDENTITY,
         center: DVec3::ZERO,
-        radius: A + 12_000.,
-        error: A,
+        radius: ellipsoid.semi_major + 12_000.,
+        error: ellipsoid.semi_major,
         children: vec![],
         url: None,
         add: false,
@@ -178,7 +179,7 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
     let mut ids = HashMap::new();
     for (z, x, y) in keys {
         let address = TileAddress { level: z, x, y };
-        let (center, radius) = region_sphere(address.region())?;
+        let (center, radius) = ellipsoid.region_sphere(address.region())?;
         let uri = l.tiles[0]
             .replace("{z}", &z.to_string())
             .replace("{x}", &x.to_string())
@@ -205,7 +206,7 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
             transform: DMat4::IDENTITY,
             center,
             radius,
-            error: A * PI / (65. * (1u64 << z) as f64),
+            error: ellipsoid.semi_major * PI / (65. * (1u64 << z) as f64),
             children: vec![],
             url,
             add: false,
@@ -263,7 +264,15 @@ impl Reader<'_> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
+    decode_on(bytes, address, Ellipsoid::WGS84)
+}
+pub(crate) fn decode_on(
+    bytes: &[u8],
+    address: TileAddress,
+    ellipsoid: Ellipsoid,
+) -> Result<Primitive> {
     if address.level > 24 || address.x >= (2 << address.level) || address.y >= (1 << address.level)
     {
         return Err(Error("Invalid terrain tile address"));
@@ -356,7 +365,7 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
         let v = values[count + i];
         let h = values[2 * count + i];
         positions.push(
-            (ecef(
+            (ellipsoid.cartesian(
                 region[0] + (region[2] - region[0]) * u,
                 region[1] + (region[3] - region[1]) * v,
                 low + (high - low) * h,
@@ -382,7 +391,8 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
             .try_normalize()
             .unwrap_or_else(|| (center + positions[i].as_dvec3()).normalize().as_vec3());
     }
-    let skirt = (A * PI / (65. * (1u64 << address.level) as f64)).clamp(1., 1000.) as f32;
+    let skirt = (ellipsoid.semi_major * PI / (65. * (1u64 << address.level) as f64))
+        .clamp(1., 1000.) as f32;
     for edge in edges {
         let start = positions.len() as u32;
         for &i in &edge {
@@ -420,6 +430,7 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::geography::ecef;
     #[test]
     #[ignore = "requires CESIUM_NATIVE_TEST_DATA from the pinned Native source checkout"]
     fn independent_cesium_native_terrain_fixtures_decode() {
@@ -456,8 +467,11 @@ pub(crate) mod tests {
         }
     }
     pub(crate) fn fixture(address: TileAddress) -> Vec<u8> {
+        fixture_on(address, Ellipsoid::WGS84)
+    }
+    pub(crate) fn fixture_on(address: TileAddress, ellipsoid: Ellipsoid) -> Vec<u8> {
         let r = address.region();
-        let center = ecef((r[0] + r[2]) * 0.5, (r[1] + r[3]) * 0.5, 0.);
+        let center = ellipsoid.cartesian((r[0] + r[2]) * 0.5, (r[1] + r[3]) * 0.5, 0.);
         let mut bytes = Vec::new();
         for x in center.to_array() {
             bytes.extend(x.to_le_bytes());

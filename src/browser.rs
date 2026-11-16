@@ -24,19 +24,32 @@ impl Backend for BrowserBackend {
             CesiumSource::Prepared {
                 url,
                 ion_access_token,
-            } => tiles_core::Session::open_prepared(url, ion_access_token.as_deref()),
-            CesiumSource::Url(url) => tiles_core::Session::open_url(url),
+            } => tiles_core::Session::open_prepared_with_ellipsoid(
+                url,
+                ion_access_token.as_deref(),
+                options.ellipsoid,
+            ),
+            CesiumSource::Url(url) => {
+                tiles_core::Session::open_url_with_ellipsoid(url, options.ellipsoid)
+            }
             CesiumSource::Ion {
                 asset_id,
                 access_token,
-            } => tiles_core::Session::open_ion(*asset_id, access_token),
-            CesiumSource::Terrain { url, imagery } => tiles_core::Session::open_terrain_url(
-                url,
-                imagery.as_ref().map(|i| tiles_core::terrain::Imagery {
-                    url_template: i.url_template.clone(),
-                    credit: i.credit.clone(),
-                }),
+            } => tiles_core::Session::open_ion_with_ellipsoid(
+                *asset_id,
+                access_token,
+                options.ellipsoid,
             ),
+            CesiumSource::Terrain { url, imagery } => {
+                tiles_core::Session::open_terrain_url_with_ellipsoid(
+                    url,
+                    imagery.as_ref().map(|i| tiles_core::terrain::Imagery {
+                        url_template: i.url_template.clone(),
+                        credit: i.credit.clone(),
+                    }),
+                    options.ellipsoid,
+                )
+            }
         }
         .map_err(|error| BackendError(error.0))?;
         session.maximum_screen_error = options.maximum_screen_error;

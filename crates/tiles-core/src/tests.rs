@@ -55,6 +55,25 @@ fn geographic_region_is_not_transformed_again() {
 }
 
 #[test]
+fn mars_region_bounds_survive_external_hierarchy_loading() {
+    let json = br#"{"root":{"boundingVolume":{"region":[0,0,0,0,10,10]},"geometricError":0,"transform":[1,0,0,0,0,1,0,0,0,0,1,0,1000,2000,3000,1]}}"#;
+    let base = Url::parse("https://example.com/mars/child.json").unwrap();
+    let nodes = content::external_tree_on(
+        json,
+        DMat4::from_translation(DVec3::splat(999.)),
+        false,
+        1,
+        &base,
+        Ellipsoid::MARS,
+    )
+    .unwrap()
+    .unwrap();
+    assert!((nodes[0].center.x - 3_396_200.).abs() < 1e-6);
+    assert_eq!(nodes[0].center.y, 0.);
+    assert_eq!(nodes[0].depth, 2);
+}
+
+#[test]
 fn visible_copyright_is_counted_escaped_and_removed_on_eviction() {
     let mut s = session();
     s.resident.insert(0, (8, 0));
@@ -118,6 +137,15 @@ fn nested_tilesets_stream_geometry_and_copyright_end_to_end() {
 
 #[test]
 fn terrain_and_matching_imagery_stream_end_to_end() {
+    for ellipsoid in [
+        Ellipsoid::WGS84,
+        Ellipsoid::MARS,
+        Ellipsoid::new(3_396_190., 3_396_190.).unwrap(),
+    ] {
+        terrain_and_imagery_on(ellipsoid);
+    }
+}
+fn terrain_and_imagery_on(ellipsoid: Ellipsoid) {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     let dir = std::env::temp_dir().join(format!(
         "caevy-terrain-{}-{}",
@@ -133,7 +161,11 @@ fn terrain_and_matching_imagery_stream_end_to_end() {
         x: 1024,
         y: 512,
     };
-    std::fs::write(dir.join("tile.terrain"), terrain::tests::fixture(a)).unwrap();
+    std::fs::write(
+        dir.join("tile.terrain"),
+        terrain::tests::fixture_on(a, ellipsoid),
+    )
+    .unwrap();
     let mut levels = vec![serde_json::json!([]); 11];
     levels[10] = serde_json::json!([{"startX":1024,"startY":512,"endX":1024,"endY":512}]);
     let layer = serde_json::json!({"format":"quantized-mesh-1.0","maxzoom":10,"tiles":["tile.terrain"],"available":levels,"attribution":"Terrain test"});
@@ -147,10 +179,14 @@ fn terrain_and_matching_imagery_stream_end_to_end() {
         url_template: format!("{base}{{z}}/{{x}}/{{y}}.png"),
         credit: "Imagery test".into(),
     };
-    let mut s = Session::open_terrain_url(base.join("layer.json").unwrap().as_str(), Some(imagery))
-        .unwrap();
+    let mut s = Session::open_terrain_url_with_ellipsoid(
+        base.join("layer.json").unwrap().as_str(),
+        Some(imagery),
+        ellipsoid,
+    )
+    .unwrap();
     let region = a.region();
-    let p = geography::ecef(
+    let p = ellipsoid.cartesian(
         (region[0] + region[2]) * 0.5,
         (region[1] + region[3]) * 0.5,
         5000.,
@@ -166,6 +202,18 @@ fn terrain_and_matching_imagery_stream_end_to_end() {
         let f = s.update(&[v], 0.016).unwrap();
         assert!(!f.load_failed, "{:?}", f.error);
         if !f.loaded.is_empty() {
+            let primitive = &f.loaded[0].primitives[0];
+            let transform = DMat4::from_cols_array(&primitive.transform);
+            let position = transform.transform_point3(DVec3::new(
+                primitive.positions[0] as f64,
+                primitive.positions[1] as f64,
+                primitive.positions[2] as f64,
+            ));
+            let expected = ellipsoid.cartesian(region[0], region[1], 100.);
+            assert!(
+                position.distance(expected) < 0.1,
+                "wrong body or height: {position:?} vs {expected:?}"
+            );
             assert_eq!(f.loaded[0].primitives[0].pixels, [12, 34, 56, 255]);
             assert!(f.credits.contains(&"Terrain test".into()));
             assert!(f.credits.contains(&"Imagery test".into()));

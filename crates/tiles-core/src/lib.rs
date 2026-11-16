@@ -2,6 +2,7 @@
 //! Experimental, bounded 3D Tiles streamer. No Cesium Native or C++ linkage.
 mod content;
 mod geography;
+pub use geography::Ellipsoid;
 mod ion;
 mod package;
 pub mod terrain;
@@ -149,12 +150,29 @@ impl Session {
     /// Prepared assets stay within their package directory. An ion token enables
     /// cache-first Photo 3D fallback using a sibling `package.json` manifest.
     pub fn open_prepared(source: &str, ion_token: Option<&str>) -> Result<Self> {
+        Self::open_prepared_with_ellipsoid(source, ion_token, Ellipsoid::WGS84)
+    }
+    pub fn open_prepared_with_ellipsoid(
+        source: &str,
+        ion_token: Option<&str>,
+        ellipsoid: Ellipsoid,
+    ) -> Result<Self> {
         let url = Url::parse(source).map_err(|_| Error("Invalid prepared source URL"))?;
         let package = package::Package::new(&url, ion_token)?;
-        Self::start(transport::Loader::prepared(package), Some(url))
+        Self::start(
+            transport::Loader::prepared(package).with_ellipsoid(ellipsoid),
+            Some(url),
+        )
     }
 
     pub fn open_terrain_url(source: &str, imagery: Option<terrain::Imagery>) -> Result<Self> {
+        Self::open_terrain_url_with_ellipsoid(source, imagery, Ellipsoid::WGS84)
+    }
+    pub fn open_terrain_url_with_ellipsoid(
+        source: &str,
+        imagery: Option<terrain::Imagery>,
+        ellipsoid: Ellipsoid,
+    ) -> Result<Self> {
         let url = Url::parse(source).map_err(|_| Error("Invalid terrain URL"))?;
         if !matches!(url.scheme(), "https" | "http" | "file") {
             return Err(Error("Unsupported source scheme"));
@@ -167,16 +185,24 @@ impl Session {
             })?;
         }
         Self::start(
-            transport::Loader::default().with_imagery(imagery),
+            transport::Loader::default()
+                .with_imagery(imagery)
+                .with_ellipsoid(ellipsoid),
             Some(url),
         )
     }
     pub fn open_url(source: &str) -> Result<Self> {
+        Self::open_url_with_ellipsoid(source, Ellipsoid::WGS84)
+    }
+    pub fn open_url_with_ellipsoid(source: &str, ellipsoid: Ellipsoid) -> Result<Self> {
         let url = Url::parse(source).map_err(|_| Error("Invalid source URL"))?;
         if !matches!(url.scheme(), "https" | "http" | "file") {
             return Err(Error("Unsupported source scheme"));
         }
-        Self::start(transport::Loader::default(), Some(url))
+        Self::start(
+            transport::Loader::default().with_ellipsoid(ellipsoid),
+            Some(url),
+        )
     }
     fn start(client: transport::Loader, url: Option<Url>) -> Result<Self> {
         let (tx, rx) = mpsc::sync_channel(4);
@@ -201,8 +227,15 @@ impl Session {
         })
     }
     pub fn open_ion(asset_id: i64, token: &str) -> Result<Self> {
+        Self::open_ion_with_ellipsoid(asset_id, token, Ellipsoid::WGS84)
+    }
+    pub fn open_ion_with_ellipsoid(
+        asset_id: i64,
+        token: &str,
+        ellipsoid: Ellipsoid,
+    ) -> Result<Self> {
         Self::start(
-            transport::Loader::ion(ion::Ion::new(asset_id, token)?),
+            transport::Loader::ion(ion::Ion::new(asset_id, token)?).with_ellipsoid(ellipsoid),
             None,
         )
     }
@@ -446,13 +479,13 @@ fn html_escape(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-fn parse_root(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
+fn parse_root_on(bytes: &[u8], base: &Url, ellipsoid: Ellipsoid) -> Result<Vec<Node>> {
     let json: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|_| Error("Invalid source manifest"))?;
     if json.get("format").and_then(|s| s.as_str()) == Some("quantized-mesh-1.0") {
-        terrain::layer(bytes, base)
+        terrain::layer_on(bytes, base, ellipsoid)
     } else {
-        parse_tileset(bytes, base)
+        tree::parse_tileset_on(bytes, base, ellipsoid)
     }
 }
 fn root_credits(bytes: &[u8], url: &Url) -> Vec<String> {

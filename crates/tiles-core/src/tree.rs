@@ -40,7 +40,14 @@ pub struct Node {
     pub add: bool,
 }
 pub fn parse_tileset(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
-    parse_tileset_at(bytes, base, DMat4::IDENTITY, false, 0)
+    parse_tileset_on(bytes, base, crate::Ellipsoid::WGS84)
+}
+pub fn parse_tileset_on(
+    bytes: &[u8],
+    base: &Url,
+    ellipsoid: crate::Ellipsoid,
+) -> Result<Vec<Node>> {
+    parse_tileset_at(bytes, base, DMat4::IDENTITY, false, 0, ellipsoid)
 }
 pub(crate) fn parse_tileset_at(
     bytes: &[u8],
@@ -48,6 +55,7 @@ pub(crate) fn parse_tileset_at(
     parent: DMat4,
     add: bool,
     depth: usize,
+    ellipsoid: crate::Ellipsoid,
 ) -> Result<Vec<Node>> {
     #[derive(Deserialize)]
     struct Tileset {
@@ -56,9 +64,10 @@ pub(crate) fn parse_tileset_at(
     let data: Tileset =
         serde_json::from_slice(bytes).map_err(|_| Error("Invalid or unsupported tileset JSON"))?;
     let mut nodes = Vec::new();
-    append(data.root, parent, add, base, &mut nodes, depth)?;
+    append(data.root, parent, add, base, &mut nodes, depth, ellipsoid)?;
     Ok(nodes)
 }
+#[allow(clippy::too_many_arguments)]
 fn append(
     tile: JsonTile,
     parent: DMat4,
@@ -66,6 +75,7 @@ fn append(
     base: &Url,
     nodes: &mut Vec<Node>,
     depth: usize,
+    ellipsoid: crate::Ellipsoid,
 ) -> Result<usize> {
     if depth > 48
         || nodes.len() >= 100_000
@@ -103,7 +113,7 @@ fn append(
             s[3] * max_scale(transform),
         )
     } else if let Some(region) = tile.bounding_volume.region {
-        crate::geography::region_sphere(region)?
+        ellipsoid.region_sphere(region)?
     } else {
         return Err(Error("Unsupported bounding volume"));
     };
@@ -138,7 +148,7 @@ fn append(
         add,
     });
     for child in tile.children {
-        let c = append(child, transform, add, base, nodes, depth + 1)?;
+        let c = append(child, transform, add, base, nodes, depth + 1, ellipsoid)?;
         nodes[id].children.push(c);
     }
     Ok(id)

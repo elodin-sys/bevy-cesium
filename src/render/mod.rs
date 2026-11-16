@@ -164,6 +164,12 @@ impl<B: Backend> TilesPlugin<B> {
         self.options.maximum_screen_error = pixels;
         self
     }
+    /// Select the reference body. Non-Earth native sources use the same Rust
+    /// loader as WASM, including its format and retention limits.
+    pub fn with_ellipsoid(mut self, ellipsoid: crate::Ellipsoid) -> Self {
+        self.options.ellipsoid = ellipsoid;
+        self
+    }
     /// Preserve acquired detail inside all selection views plus a spatial margin.
     /// Native retains refinement requirements, not just cached bytes. A positive
     /// margin enables retention; zero restores ordinary dynamic selection.

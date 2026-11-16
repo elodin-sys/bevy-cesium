@@ -46,7 +46,7 @@ native SDK.
 Pin the release in your application's `Cargo.toml`:
 
 ```toml
-bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.0" }
+bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.6.0" }
 ```
 
 Add `CesiumPlugin`, mark your cameras with `CesiumCamera`, and set
@@ -84,6 +84,36 @@ For controlled captures, supply `CesiumDetailViews`, select
 Repeatable images also require fixed input data and a controlled renderer.
 
 ## Sources and platform limits
+
+### Mars and other reference bodies
+
+Use `.with_ellipsoid(Ellipsoid::MARS)` for the IAU 2000 Mars axes, or
+`Ellipsoid::new(a, b)?` for an oblate ellipsoid or sphere matching your dataset.
+For example, many Martian map products use a sphere with `a = b = 3_396_190` m.
+Use the source's planetographic latitude convention and vertical datum; selecting
+an ellipsoid does not reproject imagery, convert planetocentric latitude, or
+convert areoid elevations into ellipsoidal heights.
+
+Non-Earth sources use the Rust loader on both native and WASM targets. It applies
+the selected body to terrain vertices, nested geographic bounds, refinement and
+skirts. Cartesian 3D Tiles boxes/spheres and mesh transforms stay in dataset
+coordinates. Prefer explicit Cartesian bounds for standards-compliant planetary
+3D Tiles: the standard `region` convention is WGS84; interpreting regions on a
+custom body is an explicit application convention.
+
+Supply body-fixed camera positions and a matching `CesiumGeoreference`, or use
+external coordinates. `TerrainSampler` remains WGS84-only; non-Earth rendering
+does not add planetary collision or height-query support. Rust-loader source and
+retention limits below also apply to non-Earth native sources.
+
+Mars axes: [USGS projection documentation](https://astrogeology.usgs.gov/docs/concepts/camera-geometry-and-projections/proj-projections/).
+
+Run `cargo run --release --example planetary` for a token-free Mars coordinate
+fixture. For its WebGPU version, run
+`trunk serve --config web/Trunk.toml --example planetary`.
+Both use the same renderer and a tiny synthetic tile, not measured Martian relief.
+The example's origin is longitude/latitude/height zero; real sources require
+their own matching georeference.
 
 | Capability | Native | Browser |
 | --- | --- | --- |
