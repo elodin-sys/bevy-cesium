@@ -1,5 +1,5 @@
 use crate::ion::{Grant, Ion};
-use crate::{Completion, Error, Payload, Result, Tile, content, parse_root};
+use crate::{Completion, Ellipsoid, Error, Payload, Result, Tile, content, parse_root_on};
 use glam::DMat4;
 use std::sync::{Arc, Mutex};
 use std::{sync::mpsc::SyncSender, time::Duration};
@@ -12,6 +12,7 @@ pub(crate) struct Loader(
     Arc<Mutex<Vec<String>>>,
     Arc<Option<crate::terrain::Imagery>>,
     Arc<Mutex<Option<crate::package::Package>>>,
+    Ellipsoid,
 );
 impl Default for Loader {
     fn default() -> Self {
@@ -24,10 +25,15 @@ impl Default for Loader {
             Arc::default(),
             Arc::default(),
             Arc::default(),
+            Ellipsoid::default(),
         )
     }
 }
 impl Loader {
+    pub(crate) fn with_ellipsoid(mut self, ellipsoid: Ellipsoid) -> Self {
+        self.5 = ellipsoid;
+        self
+    }
     pub(crate) fn prepared(package: crate::package::Package) -> Self {
         Self {
             4: Arc::new(Mutex::new(Some(package))),
@@ -96,6 +102,7 @@ impl Loader {
             Arc::default(),
             Arc::default(),
             Arc::default(),
+            Ellipsoid::default(),
         )
     }
     pub(crate) fn credits(&self) -> Vec<String> {
@@ -215,7 +222,7 @@ impl Loader {
                             .lock()
                             .map_err(|_| Error("Credits unavailable"))?
                             .extend(crate::root_credits(&b, &url));
-                        let nodes = parse_root(&b, &url)?;
+                        let nodes = parse_root_on(&b, &url, loader.5)?;
                         if loader.3.is_some() && nodes.iter().all(|n| n.terrain.is_none()) {
                             return Err(Error("Imagery overlay requires a terrain layer"));
                         }
@@ -242,7 +249,7 @@ impl Loader {
             let size = bytes.as_ref().map_or(0, Vec::len);
             let result = bytes.and_then(|b| {
                 if let Some(address) = terrain {
-                    let mut primitive = crate::terrain::decode(&b, address)?;
+                    let mut primitive = crate::terrain::decode_on(&b, address, loader.5)?;
                     if let Some(imagery) = loader.3.as_ref() {
                         crate::terrain::apply_image(
                             &mut primitive,
@@ -257,7 +264,9 @@ impl Loader {
                         vec![],
                     ));
                 }
-                if let Some(nodes) = content::external_tree(&b, transform, add, depth, &url)? {
+                if let Some(nodes) =
+                    content::external_tree_on(&b, transform, add, depth, &url, loader.5)?
+                {
                     return Ok(Payload::Hierarchy(nodes));
                 }
                 let credits = content::credits(&b)?;

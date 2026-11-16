@@ -1,5 +1,5 @@
 use crate::ion::{Grant, Ion};
-use crate::{Completion, Error, Payload, Result, Tile, content, parse_root};
+use crate::{Completion, Ellipsoid, Error, Payload, Result, Tile, content, parse_root_on};
 use glam::DMat4;
 use js_sys::{Reflect, Uint8Array};
 use std::{cell::RefCell, rc::Rc};
@@ -17,9 +17,14 @@ pub(crate) struct Loader(
     Rc<RefCell<Vec<String>>>,
     Rc<Option<crate::terrain::Imagery>>,
     Rc<RefCell<Option<crate::package::Package>>>,
+    Ellipsoid,
 );
 
 impl Loader {
+    pub(crate) fn with_ellipsoid(mut self, ellipsoid: Ellipsoid) -> Self {
+        self.4 = ellipsoid;
+        self
+    }
     pub(crate) fn prepared(package: crate::package::Package) -> Self {
         Self {
             3: Rc::new(RefCell::new(Some(package))),
@@ -84,6 +89,7 @@ impl Loader {
             Rc::default(),
             Rc::default(),
             Rc::default(),
+            Ellipsoid::default(),
         )
     }
     pub(crate) fn credits(&self) -> Vec<String> {
@@ -191,7 +197,7 @@ impl Loader {
                 let url = loader.prepared_root(url).await?;
                 loader.fetch(&url).await.and_then(|b| {
                     loader.1.borrow_mut().extend(crate::root_credits(&b, &url));
-                    let nodes = parse_root(&b, &url)?;
+                    let nodes = parse_root_on(&b, &url, loader.4)?;
                     if loader.2.is_some() && nodes.iter().all(|n| n.terrain.is_none()) {
                         return Err(Error("Imagery overlay requires a terrain layer"));
                     }
@@ -222,7 +228,8 @@ impl Loader {
                 Ok(bytes) => {
                     async {
                         if let Some(address) = terrain {
-                            let mut primitive = crate::terrain::decode(&bytes, address)?;
+                            let mut primitive =
+                                crate::terrain::decode_on(&bytes, address, loader.4)?;
                             if let Some(imagery) = loader.2.as_ref() {
                                 crate::terrain::apply_image(
                                     &mut primitive,
@@ -237,9 +244,9 @@ impl Loader {
                                 vec![],
                             ));
                         }
-                        if let Some(nodes) =
-                            content::external_tree(&bytes, transform, add, depth, &url)?
-                        {
+                        if let Some(nodes) = content::external_tree_on(
+                            &bytes, transform, add, depth, &url, loader.4,
+                        )? {
                             return Ok(Payload::Hierarchy(nodes));
                         }
                         let credits = content::credits(&bytes)?;

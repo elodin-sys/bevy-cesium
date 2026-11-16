@@ -1,24 +1,30 @@
 use crate::{native, render};
 use render::{Backend, BackendError, Frame, Options, Primitive, Tile};
-/// Native Bevy plugin: Cesium Native for live sources, Rust for prepared packages.
+/// Native Bevy plugin: Cesium Native for Earth live sources; Rust for prepared
+/// packages and custom reference bodies.
 /// Use its builder methods to configure
 /// detail, retention and the initial loading wait before adding it to your app.
 pub type CesiumPlugin = render::TilesPlugin<NativeBackend>;
 pub enum NativeBackend {
     Native(native::Session),
-    Prepared(Box<crate::browser::BrowserBackend>),
+    Rust(Box<crate::browser::BrowserBackend>),
 }
 impl Backend for NativeBackend {
     fn open(source: &render::CesiumSource, options: Options) -> Result<Self, BackendError> {
-        if matches!(source, render::CesiumSource::Prepared { .. }) {
+        let prepared = matches!(source, render::CesiumSource::Prepared { .. });
+        if prepared || options.ellipsoid != crate::Ellipsoid::WGS84 {
             return crate::browser::BrowserBackend::open(
                 source,
                 Options {
-                    lod_retention_margin: 0.0,
+                    lod_retention_margin: if prepared {
+                        0.0
+                    } else {
+                        options.lod_retention_margin
+                    },
                     ..options
                 },
             )
-            .map(|backend| Self::Prepared(Box::new(backend)));
+            .map(|backend| Self::Rust(Box::new(backend)));
         }
         let mut session = match source {
             render::CesiumSource::Prepared { .. } => unreachable!("prepared source handled above"),
@@ -59,7 +65,7 @@ impl Backend for NativeBackend {
         seconds: f32,
     ) -> Result<Frame, BackendError> {
         let session = match self {
-            Self::Prepared(backend) => return backend.update(views, seconds),
+            Self::Rust(backend) => return backend.update(views, seconds),
             Self::Native(session) => session,
         };
         let views: Vec<_> = views

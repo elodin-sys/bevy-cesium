@@ -5,7 +5,8 @@
 //! Both backends use the same scene boundary, renderer and readiness tracking.
 //!
 //! Add [`CesiumPlugin`], mark your cameras with [`CesiumCamera`], and set
-//! [`CesiumGeoreference`] to place Earth coordinates in your scene. Your app
+//! [`CesiumGeoreference`] to place body-fixed coordinates in your scene. Earth
+//! is the default; use [`Ellipsoid`] for another reference body. Your app
 //! supplies lighting and displays the attribution from [`CesiumCredits`].
 //!
 //! For stable startup, enable `CesiumPlugin::with_initial_load_wait` and show a
@@ -47,6 +48,7 @@ pub use browser::{BrowserBackend, CesiumPlugin};
 pub use render::*;
 #[cfg(not(target_family = "wasm"))]
 pub use terrain::{CartographicPosition, TerrainQueryError, TerrainSampler};
+pub use tiles_core::Ellipsoid;
 // CXX generates the FFI boundary here; application-facing code is safe Rust.
 #[allow(unsafe_code)]
 #[cfg(not(target_family = "wasm"))]
