@@ -284,13 +284,63 @@ impl Session {
         let mut wanted = Vec::new();
         let mut required = HashSet::new();
         if !views.is_empty() && !self.nodes.is_empty() {
-            self.select(0, views, &mut wanted, &mut frame.visible, &mut required);
+            self.select(
+                0,
+                views,
+                &mut wanted,
+                &mut frame.visible,
+                &mut required,
+                false,
+            );
+            if wanted.iter().any(|id| {
+                self.nodes[*id]
+                    .url
+                    .as_ref()
+                    .is_some_and(|url| self.client.requires_provider(url))
+            }) {
+                // A missing provider sibling must not hide prepared detail behind
+                // a coarse ancestor. Select the available package as an offline
+                // fallback while continuing to request the full hierarchy.
+                let mut cached_visible = Vec::new();
+                let mut cached_wanted = Vec::new();
+                self.select(
+                    0,
+                    views,
+                    &mut cached_wanted,
+                    &mut cached_visible,
+                    &mut required,
+                    true,
+                );
+                if !cached_visible.is_empty() {
+                    frame.visible = cached_visible;
+                }
+                cached_wanted.extend(wanted);
+                wanted = cached_wanted;
+            }
         }
         for id in &required {
             if let Some(r) = self.resident.get_mut(id) {
                 r.1 = self.clock;
             }
         }
+        // Prepared reads take priority. Reserve a slot for them even while
+        // provider requests hang, including on later camera movements.
+        wanted.sort_by_key(|id| {
+            self.nodes[*id]
+                .url
+                .as_ref()
+                .is_some_and(|url| self.client.requires_provider(url))
+        });
+        let mut provider_pending = self
+            .pending
+            .iter()
+            .filter(|id| {
+                self.nodes[**id]
+                    .url
+                    .as_ref()
+                    .is_some_and(|url| self.client.requires_provider(url))
+            })
+            .count();
         for id in wanted {
             if self.pending.len() >= 4 {
                 break;
@@ -304,6 +354,12 @@ impl Session {
             let Some(url) = self.nodes[id].url.clone() else {
                 continue;
             };
+            if self.client.requires_provider(&url) {
+                if provider_pending >= 3 {
+                    continue;
+                }
+                provider_pending += 1;
+            }
             self.pending.insert(id);
             self.stats.requests += 1;
             self.client.load_tile(
@@ -360,8 +416,16 @@ impl Session {
         wanted: &mut Vec<usize>,
         visible: &mut Vec<u64>,
         required: &mut HashSet<usize>,
+        prepared_only: bool,
     ) -> bool {
         let n = &self.nodes[id];
+        if prepared_only
+            && n.url
+                .as_ref()
+                .is_some_and(|url| self.client.requires_provider(url))
+        {
+            return true;
+        }
         let score = views
             .iter()
             .filter_map(|v| n.screen_error(v))
@@ -374,7 +438,7 @@ impl Session {
             let before = visible.len();
             let mut all_ready = true;
             for child in &n.children {
-                all_ready &= self.select(*child, views, wanted, visible, required);
+                all_ready &= self.select(*child, views, wanted, visible, required, prepared_only);
             }
             if n.add {
                 if ready {
@@ -385,7 +449,7 @@ impl Session {
                 }
                 return (!has || ready) && all_ready;
             }
-            if all_ready {
+            if all_ready && (!prepared_only || visible.len() > before || !has) {
                 return true;
             }
             if ready {

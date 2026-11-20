@@ -12,6 +12,7 @@ pub(crate) struct Loader(
     Arc<Mutex<Vec<String>>>,
     Arc<Option<crate::terrain::Imagery>>,
     Arc<Mutex<Option<crate::package::Package>>>,
+    Arc<Mutex<()>>, // Provider authorization only; local reads never acquire it.
 );
 impl Default for Loader {
     fn default() -> Self {
@@ -24,10 +25,22 @@ impl Default for Loader {
             Arc::default(),
             Arc::default(),
             Arc::default(),
+            Arc::default(),
         )
     }
 }
 impl Loader {
+    pub(crate) fn requires_provider(&self, url: &Url) -> bool {
+        self.4.lock().ok().is_some_and(|state| {
+            state.as_ref().is_some_and(|package| {
+                matches!(
+                    package.request(url),
+                    Ok(crate::package::Request::Provider(_))
+                )
+            })
+        })
+    }
+
     pub(crate) fn prepared(package: crate::package::Package) -> Self {
         Self {
             4: Arc::new(Mutex::new(Some(package))),
@@ -55,34 +68,40 @@ impl Loader {
             .install(&bytes)
     }
     fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
-        // Serialize grant creation: concurrent cache misses share one session.
-        let mut state = self.4.lock().map_err(|_| Error("Package unavailable"))?;
-        let package = state.as_mut().ok_or(Error("Package unavailable"))?;
-        if package.credentials.is_none() || refresh {
+        // Share one grant between provider misses without holding the package
+        // lock over network I/O: cached resources must remain readable meanwhile.
+        let _authorization = self.5.lock().map_err(|_| Error("Provider unavailable"))?;
+        let ion = {
+            let state = self.4.lock().map_err(|_| Error("Package unavailable"))?;
+            let package = state.as_ref().ok_or(Error("Package unavailable"))?;
+            if !refresh && let Some(credentials) = &package.credentials {
+                return credentials.authorize(url);
+            }
             let manifest = package
                 .manifest
                 .as_ref()
                 .ok_or(Error("Missing package manifest"))?;
-            let ion = Ion::new(
+            Ion::new(
                 manifest.ion_asset_id,
                 package.token.as_deref().ok_or(Error("Offline terrain"))?,
-            )?;
-            let grant = Grant::parse(&fetch_authorized(&self.0, &ion.endpoint, Some(&ion.token))?)?;
-            crate::package::canonical(&grant.url)?;
-            let bytes = fetch_restricted(&self.0, &grant.url, None, true)?;
-            package.credentials = Some(crate::package::GoogleSession::from_root(
-                &grant.url, &bytes,
-            )?);
-            self.2
-                .lock()
-                .map_err(|_| Error("Credits unavailable"))?
-                .extend(grant.credits);
-        }
-        package
-            .credentials
-            .as_ref()
-            .ok_or(Error("Missing Photo 3D session"))?
-            .authorize(url)
+            )?
+        };
+        let grant = Grant::parse(&fetch_authorized(&self.0, &ion.endpoint, Some(&ion.token))?)?;
+        crate::package::canonical(&grant.url)?;
+        let bytes = fetch_restricted(&self.0, &grant.url, None, true)?;
+        let credentials = crate::package::GoogleSession::from_root(&grant.url, &bytes)?;
+        let authorized = credentials.authorize(url)?;
+        self.4
+            .lock()
+            .map_err(|_| Error("Package unavailable"))?
+            .as_mut()
+            .ok_or(Error("Package unavailable"))?
+            .credentials = Some(credentials);
+        self.2
+            .lock()
+            .map_err(|_| Error("Credits unavailable"))?
+            .extend(grant.credits);
+        Ok(authorized)
     }
 
     pub(crate) fn with_imagery(mut self, imagery: Option<crate::terrain::Imagery>) -> Self {
@@ -93,6 +112,7 @@ impl Loader {
         Self(
             Self::default().0,
             Arc::new(Mutex::new(Some(ion))),
+            Arc::default(),
             Arc::default(),
             Arc::default(),
             Arc::default(),
@@ -422,6 +442,73 @@ mod tests {
             assert_eq!(loader.fetch(&remote).unwrap_err().0, expected);
             server.join().unwrap();
         }
+    }
+
+    #[test]
+    fn slow_provider_does_not_block_prepared_reads() {
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("prepared-progress-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("cached.json"), b"cached terrain").unwrap();
+        let root = Url::from_file_path(directory.join("tileset.json")).unwrap();
+        let remote = Url::parse("https://tile.googleapis.com/v1/3dtiles/root.json").unwrap();
+        let mut package = crate::package::Package::new(&root, Some("test-token")).unwrap();
+        package
+            .install(
+                &serde_json::to_vec(&serde_json::json!({
+                    "version": 1, "ion_asset_id": 2275207, "root": remote.as_str(),
+                    "resources": {remote.as_str(): "cached.json"}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let mut loader = Loader::prepared(package);
+        loader.0 = ureq::Agent::config_builder()
+            .proxy(Some(
+                ureq::Proxy::new(&format!("http://{}", proxy.local_addr().unwrap())).unwrap(),
+            ))
+            .timeout_global(Some(Duration::from_secs(3)))
+            .build()
+            .into();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = proxy.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            entered_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            // No provider connection is ever made: this local proxy rejects it.
+            let _ = stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\n\r\n");
+        });
+        let provider = loader.clone();
+        let provider_thread = std::thread::spawn(move || {
+            provider.provider_url(
+                &Url::parse("https://tile.googleapis.com/v1/3dtiles/missing.json").unwrap(),
+                false,
+            )
+        });
+        entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let (cached_tx, cached_rx) = std::sync::mpsc::channel();
+        let cached_thread = std::thread::spawn(move || {
+            cached_tx.send(loader.fetch(&remote)).unwrap();
+        });
+        let cached = cached_rx.recv_timeout(Duration::from_millis(500));
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
+        assert!(provider_thread.join().unwrap().is_err());
+        cached_thread.join().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+        assert_eq!(
+            cached
+                .expect("cached terrain waited for the provider")
+                .unwrap(),
+            b"cached terrain"
+        );
     }
 
     #[test]

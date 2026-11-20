@@ -20,6 +20,15 @@ pub(crate) struct Loader(
 );
 
 impl Loader {
+    pub(crate) fn requires_provider(&self, url: &Url) -> bool {
+        self.3.borrow().as_ref().is_some_and(|package| {
+            matches!(
+                package.request(url),
+                Ok(crate::package::Request::Provider(_))
+            )
+        })
+    }
+
     pub(crate) fn prepared(package: crate::package::Package) -> Self {
         Self {
             3: Rc::new(RefCell::new(Some(package))),
