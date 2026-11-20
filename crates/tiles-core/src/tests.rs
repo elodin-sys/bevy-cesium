@@ -281,6 +281,43 @@ fn prepared_tiles_progress_while_provider_slots_are_busy() {
 }
 
 #[test]
+fn prepared_detail_survives_missing_provider_siblings() {
+    let root = Url::parse("file:///prepared/tileset.json").unwrap();
+    let mut s = session();
+    s.client = transport::Loader::prepared(package::Package::new(&root, Some("unused")).unwrap());
+    s.nodes[0].url = Some(root.join("parent.glb").unwrap());
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.nodes[1].url = Some(root.join("detail.glb").unwrap());
+    s.nodes[2].url =
+        Some(Url::parse("https://tile.googleapis.com/v1/3dtiles/missing.glb").unwrap());
+    s.resident.insert(0, (10, 0));
+    s.pending.extend([1, 2]);
+
+    // Keep the parent while its prepared detail is still being decoded.
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [0]);
+    s.pending.remove(&1);
+    s.resident.insert(1, (10, 0));
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [1]);
+
+    // An outage outside the package must not downgrade the prepared detail.
+    s.pending.remove(&2);
+    s.failed.insert(2);
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [1]);
+
+    // If no prepared detail is in view, retain the available coarse parent.
+    s.nodes[1].center = DVec3::new(0., 0., 200.);
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [0]);
+    s.nodes[1].center = DVec3::ZERO;
+
+    // Switch to the complete child selection after provider recovery.
+    s.failed.remove(&2);
+    s.resident.insert(2, (10, 0));
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [1, 2]);
+    assert_eq!(s.stats.requests, 0);
+}
+
+#[test]
 fn transient_failures_retry_after_delay_but_invalid_content_stays_failed() {
     let mut s = session();
     s.tx.send(Completion::Content(0, Err(Error("HTTP request failed")), 0))
@@ -370,11 +407,25 @@ fn replacement_waits_for_every_visible_child() {
     s.resident.insert(1, (10, 0));
     let mut wanted = vec![];
     let mut visible = vec![];
-    assert!(s.select(0, &[view()], &mut wanted, &mut visible, &mut HashSet::new()));
+    assert!(s.select(
+        0,
+        &[view()],
+        &mut wanted,
+        &mut visible,
+        &mut HashSet::new(),
+        false
+    ));
     assert_eq!(visible, vec![0]);
     s.resident.insert(2, (10, 0));
     visible.clear();
-    s.select(0, &[view()], &mut wanted, &mut visible, &mut HashSet::new());
+    s.select(
+        0,
+        &[view()],
+        &mut wanted,
+        &mut visible,
+        &mut HashSet::new(),
+        false,
+    );
     assert_eq!(visible, vec![1, 2]);
 }
 #[test]
@@ -395,6 +446,7 @@ fn multiple_cameras_union_and_additive_refinement() {
         &mut wanted,
         &mut visible,
         &mut HashSet::new(),
+        false,
     );
     assert_eq!(visible, vec![1, 0]);
 }
@@ -494,7 +546,14 @@ fn covered_ancestors_are_not_downloaded_again() {
     s.resident.insert(2, (10, 0));
     let mut wanted = vec![];
     let mut visible = vec![];
-    s.select(0, &[view()], &mut wanted, &mut visible, &mut HashSet::new());
+    s.select(
+        0,
+        &[view()],
+        &mut wanted,
+        &mut visible,
+        &mut HashSet::new(),
+        false,
+    );
     assert_eq!(visible, vec![1, 2]);
     assert!(wanted.is_empty());
 }

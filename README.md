@@ -46,8 +46,18 @@ native SDK.
 Pin the release in your application's `Cargo.toml`:
 
 ```toml
-bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.0" }
+bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.1" }
 ```
+
+- **Rust dependency:** Cargo fetches Bevy-Cesium and `tiles-core` from Git.
+  For an unreleased fix, use `rev = "<full commit SHA>"`. Commit `Cargo.lock`.
+- **Native prerequisite:** run `just prepare` inside `nix develop` in a checkout
+  of the same revision. This builds Cesium Native 0.65.0 once. The default cache
+  is detected automatically; use `CESIUM_NATIVE_DIR` for another installation.
+  Cargo builds the bridge, not the SDK.
+- **WASM:** target `wasm32-unknown-unknown`; no C++ bridge or native SDK.
+- **Elodin:** `just install` prepares its pinned dependency. Prebuilt Elodin
+  binaries require no Bevy-Cesium compilation.
 
 Add `CesiumPlugin`, mark your cameras with `CesiumCamera`, and set
 `CesiumGeoreference` to map ECEF (Earth-centered, Earth-fixed) coordinates into
@@ -56,9 +66,7 @@ preserving any required attribution links and logos.
 
 ```rust,ignore
 app.add_plugins(
-    CesiumPlugin::new(source)
-        .with_maximum_screen_error(16.0)
-        .with_initial_load_wait(),
+    CesiumPlugin::new(source).with_maximum_screen_error(16.0),
 );
 ```
 
@@ -66,9 +74,10 @@ The backend is selected by target, without Cargo feature flags. See the
 [native viewer](examples/viewer.rs) and [browser example](examples/browser.rs)
 for complete applications.
 
-Smaller screen-error values request finer detail. Initial-load waiting keeps
-provisional terrain hidden until geometry and imagery are ready on the GPU.
-Show loading progress, handle `CesiumStatus` errors and set a timeout in your app.
+Smaller screen-error values request finer detail. Available terrain renders
+progressively by default. Optional `.with_initial_load_wait()` keeps provisional
+terrain hidden until geometry and imagery are ready on the GPU; applications
+using it should handle `CesiumStatus` errors and set a timeout.
 Later updates keep the previous selection visible until its replacement is ready.
 
 For data received after startup, use `CesiumPlugin::deferred()` and insert
@@ -113,6 +122,8 @@ package. Downloads remain transient and do not update the package. Prepared
 sources use the Rust loader's limits and disable native LOD retention.
 They display available cached detail immediately, even with initial-load waiting
 enabled; `ready_for_capture()` still waits for a complete, error-free selection.
+Missing provider siblings do not force prepared detail back to a coarse ancestor.
+Areas outside the package still depend on provider availability.
 
 Browser terrain requires EPSG:4326/TMS, a maximum level of 24 and static
 availability above level 6. Dynamic metadata availability and parent layers are
