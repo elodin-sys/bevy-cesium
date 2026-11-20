@@ -222,6 +222,65 @@ fn session() -> Session {
     }
 }
 #[test]
+fn prepared_tiles_progress_while_provider_slots_are_busy() {
+    let root = Url::from_file_path(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/data/tileset.json"),
+    )
+    .unwrap();
+    let mut package = package::Package::new(&root, Some("unused")).unwrap();
+    let remote_root = "https://tile.googleapis.com/v1/3dtiles/root.json";
+    package
+        .install(
+            &serde_json::to_vec(&serde_json::json!({
+                "version": 1, "ion_asset_id": 2275207, "root": remote_root,
+                "resources": {remote_root: "tileset.json"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let mut s = session();
+    s.client = transport::Loader::prepared(package);
+    s.nodes[0].url = None;
+    s.nodes[0].children = (1..=5).collect();
+    for index in 1..=5 {
+        let mut child = node();
+        child.url = Some(if index == 5 {
+            root.join("triangle.gltf").unwrap()
+        } else {
+            Url::parse(&format!(
+                "https://tile.googleapis.com/v1/3dtiles/{index}.glb"
+            ))
+            .unwrap()
+        });
+        s.nodes.push(child);
+    }
+    // Model three outstanding provider requests, without any external traffic.
+    s.pending.extend([1, 2, 3]);
+    s.update(&[view()], 0.).unwrap();
+    assert!(
+        s.pending.contains(&5),
+        "local tile was starved by provider work"
+    );
+    assert!(
+        !s.pending.contains(&4),
+        "provider work consumed the reserved slot"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let frame = s.update(&[view()], 0.01).unwrap();
+        if frame.visible.contains(&5) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "prepared geometry never became visible"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(s.stats.requests, 1);
+}
+
+#[test]
 fn transient_failures_retry_after_delay_but_invalid_content_stays_failed() {
     let mut s = session();
     s.tx.send(Completion::Content(0, Err(Error("HTTP request failed")), 0))
