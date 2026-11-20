@@ -291,6 +291,24 @@ impl Session {
                 r.1 = self.clock;
             }
         }
+        // Prepared reads take priority. Reserve a slot for them even while
+        // provider requests hang, including on later camera movements.
+        wanted.sort_by_key(|id| {
+            self.nodes[*id]
+                .url
+                .as_ref()
+                .is_some_and(|url| self.client.requires_provider(url))
+        });
+        let mut provider_pending = self
+            .pending
+            .iter()
+            .filter(|id| {
+                self.nodes[**id]
+                    .url
+                    .as_ref()
+                    .is_some_and(|url| self.client.requires_provider(url))
+            })
+            .count();
         for id in wanted {
             if self.pending.len() >= 4 {
                 break;
@@ -304,6 +322,12 @@ impl Session {
             let Some(url) = self.nodes[id].url.clone() else {
                 continue;
             };
+            if self.client.requires_provider(&url) {
+                if provider_pending >= 3 {
+                    continue;
+                }
+                provider_pending += 1;
+            }
             self.pending.insert(id);
             self.stats.requests += 1;
             self.client.load_tile(
