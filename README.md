@@ -120,7 +120,7 @@ For cache-first Photo 3D streaming, supply an ion token and a sibling
 fresh provider session. Tokens and provider sessions are not stored in the
 package. Downloads remain transient and do not update the package. Prepared
 sources use the Rust loader's limits and disable native LOD retention.
-They display available cached detail immediately, even with initial-load waiting
+They display available cached detail progressively, even with initial-load waiting
 enabled; `ready_for_capture()` still waits for a complete, error-free selection.
 Missing provider siblings do not force prepared detail back to a coarse ancestor.
 Areas outside the package still depend on provider availability.
@@ -139,11 +139,27 @@ The Rust loader requests coarse coverage before finer levels, with nearer bounds
 first within each level. Prepared resources retain priority over provider reads.
 Regions refine independently once their replacement meshes and materials are
 prepared. Parents cover incomplete child sets; cached children cover zoom-out
-transitions until their parent is ready. Returning to tiles still in the unused
+transitions until their parent is ready. Before REPLACE refinement, coarse sibling
+coverage is prepared and retained, including siblings outside the camera views.
+This avoids detail/coarse oscillation during pans without drawing overlapping
+parent and child surfaces. It can delay refinement and increases the active
+working set, which is excluded from the unused-cache budget. Offscreen prefetch
+stops at the first content frontier; it does not request deeper offscreen detail.
+An intersecting parent remains selected when all its children are culled.
+Returning to tiles still in the unused
 cache does not refetch them. Evicted tiles can require another download.
 Imagery updates retain the previous image until the replacement is prepared,
 without blocking other ready regions. Capture readiness still waits for all
 selected revisions. These checks do not fence GPU execution.
+
+HTTP diagnostics include the status and distinguish prepared-package failures
+from provider failures, without printing URLs or credentials. Transient tile
+failures retry with exponential backoff and jitter (10–144 seconds), respecting
+longer `Retry-After` values. HTTP 429/503 responses also pause requests sharing
+that source; provider throttling does not block prepared reads. Browsers can read
+`Retry-After` only when the server exposes that header through CORS. Permanent
+errors such as 403/404 are not repeatedly retried. Tile error logs are aggregated
+over five seconds. Root-load failures still require reopening the source.
 
 On native targets, `.with_lod_retention_margin(meters)` preserves acquired detail
 until it leaves every camera view plus the margin. Retention is off by default

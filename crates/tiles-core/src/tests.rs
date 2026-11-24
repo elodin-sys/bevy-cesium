@@ -747,3 +747,116 @@ fn hierarchy_errors_are_distinct_and_leave_the_session_usable() {
         assert!(s.update(&[], 0.016).unwrap().load_failed);
     }
 }
+
+#[test]
+fn in_view_parent_survives_when_every_child_is_outside_the_frustum() {
+    let mut s = session();
+    s.nodes[0].radius = 100.;
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.nodes[1].center.x = 30.;
+    s.nodes[2].center.x = -30.;
+    s.resident.extend((0..3).map(|id| (id, (10, 0))));
+    assert!(s.nodes[0].screen_error(&view()).is_some());
+    assert!(
+        s.nodes[1..]
+            .iter()
+            .all(|n| n.screen_error(&view()).is_none())
+    );
+    let frame = s.update(&[view()], 0.).unwrap();
+    assert_eq!(frame.visible, [0]);
+    assert_eq!(s.stats.requests, 0);
+    let mut overview = view();
+    overview.position[0] = 30.;
+    assert_eq!(s.update(&[view(), overview], 0.).unwrap().visible, [1]);
+}
+
+#[test]
+fn empty_contentless_subtree_does_not_hide_a_covering_ancestor() {
+    let mut s = session();
+    s.nodes[0].radius = 100.;
+    s.nodes[0].children = vec![1];
+    s.nodes.extend([node(), node()]);
+    s.nodes[1].radius = 100.;
+    s.nodes[1].url = None;
+    s.nodes[1].children = vec![2];
+    s.nodes[2].center.x = 30.;
+    s.resident.extend([(0, (10, 0)), (2, (10, 0))]);
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [0]);
+}
+
+#[test]
+fn panning_waits_for_coarse_sibling_coverage_then_reuses_it_without_overlap() {
+    let mut s = session();
+    s.cache_bytes = 0;
+    s.nodes[0].radius = 100.;
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.nodes[2].center.x = 14.;
+    s.resident.extend([(0, (10, 0)), (1, (10, 0))]);
+    s.set_render_ready([0, 1]);
+    s.failed.insert(2);
+    let straight = view();
+    let mut pan = straight;
+    pan.direction = [0.2, 0., -1.];
+    assert!(s.nodes[2].screen_error(&straight).is_none());
+    assert!(s.nodes[2].screen_error(&pan).is_some());
+    for _ in 0..20 {
+        for v in [straight, pan] {
+            let frame = s.update(&[v], 0.1).unwrap();
+            assert_eq!(frame.visible, [0]);
+            assert!(frame.removed.is_empty());
+        }
+    }
+    // Decoding alone is not enough to replace a parent.
+    s.failed.remove(&2);
+    s.resident.insert(2, (10, 0));
+    assert_eq!(s.update(&[straight], 0.).unwrap().visible, [0]);
+    s.set_render_ready([0, 1, 2]);
+    for _ in 0..20 {
+        assert_eq!(s.update(&[straight], 0.).unwrap().visible, [1]);
+        assert_eq!(s.update(&[pan], 0.).unwrap().visible, [1, 2]);
+        assert_eq!(s.update(&[straight, pan], 0.).unwrap().visible, [1, 2]);
+        assert_eq!(s.resident.len(), 2); // The parent was evicted, siblings stay.
+    }
+    assert_eq!(s.stats.requests, 0);
+    assert_eq!(s.stats.resident_bytes, 20);
+    s.update(&[], 0.).unwrap();
+    assert_eq!(s.stats.resident_bytes, 0); // Working set is released with the views.
+}
+
+#[test]
+fn offscreen_prefetch_stops_at_the_first_content_frontier() {
+    let mut s = session();
+    s.nodes[0].radius = 100.;
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node(), node(), node()]);
+    s.nodes[2].center.x = 30.;
+    s.nodes[2].children = vec![3, 4];
+    s.nodes[3].center.x = 30.;
+    s.nodes[4].center.x = 30.;
+    s.resident.extend([(0, (10, 0)), (1, (10, 0))]);
+    let mut wanted = vec![];
+    let mut visible = vec![];
+    s.select(
+        0,
+        &[view()],
+        &mut wanted,
+        &mut visible,
+        &mut HashSet::new(),
+        false,
+    );
+    assert_eq!(visible, [0]);
+    assert_eq!(wanted, [2]);
+}
+
+#[test]
+fn explicitly_empty_sibling_does_not_block_ready_detail() {
+    let mut s = session();
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.nodes[1].url = None;
+    s.resident.extend([(0, (10, 0)), (2, (10, 0))]);
+    assert_eq!(s.update(&[view()], 0.).unwrap().visible, [2]);
+    assert_eq!(s.stats.requests, 0);
+}
