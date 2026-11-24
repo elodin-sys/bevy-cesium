@@ -44,6 +44,10 @@ impl Backend for BrowserBackend {
         Ok(Self(session))
     }
 
+    fn set_render_ready(&mut self, ids: impl IntoIterator<Item = u64>) {
+        self.0.set_render_ready(ids);
+    }
+
     fn update(&mut self, views: &[CesiumView], seconds: f32) -> Result<Frame, BackendError> {
         let views: Vec<_> = views
             .iter()
@@ -61,7 +65,7 @@ impl Backend for BrowserBackend {
             .0
             .update(&views, seconds)
             .map_err(|error| BackendError(error.0))?;
-        let complete = f.pending == 0 && !f.load_failed && !f.visible.is_empty();
+        let complete = f.selection_complete;
         Ok(Frame {
             loaded: f
                 .loaded

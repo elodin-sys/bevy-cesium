@@ -383,6 +383,8 @@ fn stream<B: Backend>(
         views.0.iter().chain(&detail_views.0).copied().collect()
     };
     let update_started = Instant::now();
+    let render_ready: Vec<_> = native.tiles.keys().copied().collect();
+    native.session.set_render_ready(render_ready);
     let frame = match native.session.update(&selection_views, time.delta_secs()) {
         Ok(frame) => frame,
         Err(error) => {
@@ -541,16 +543,24 @@ fn publish<B: Backend>(
             }
         }
     }
-    // Keep the entire previous selection while any new tile is not ready.
-    // Mixing a partial child set with its parent causes holes or z-fighting.
+    // The selected coverage must be prepared before publication. An imagery
+    // revision can keep using its old prepared version without blocking other
+    // regions. Never mix a partial child set with its parent.
     status.pending_render_tiles = native
         .selected
         .iter()
         .filter(|id| !native.tiles.contains_key(id) || native.replacements.contains_key(id))
         .count();
-    if status.pending_render_tiles == 0
+    let coverage_ready = native
+        .selected
+        .iter()
+        .all(|id| native.tiles.contains_key(id));
+    if coverage_ready
         && (!native.waiting_for_initial_load
-            || (status.selection_complete && !status.load_failed && !native.selected.is_empty()))
+            || (status.selection_complete
+                && !status.load_failed
+                && status.pending_render_tiles == 0
+                && !native.selected.is_empty()))
     {
         native.published = native.selected.clone();
         native.waiting_for_initial_load = false;
@@ -716,10 +726,14 @@ mod tests {
     struct ControlledBackend {
         next: Frame,
         views: Vec<CesiumView>,
+        render_ready: HashSet<u64>,
     }
     impl Backend for ControlledBackend {
         fn open(_: &CesiumSource, _: Options) -> Result<Self, BackendError> {
             Ok(Self::default())
+        }
+        fn set_render_ready(&mut self, ids: impl IntoIterator<Item = u64>) {
+            self.render_ready = ids.into_iter().collect();
         }
         fn update(&mut self, views: &[CesiumView], _: f32) -> Result<Frame, BackendError> {
             self.views = views.to_vec();
@@ -1022,6 +1036,64 @@ mod tests {
         step(&mut app, vec![], vec![], vec![2, 3]);
         assert!(visible_entities(&mut app).is_empty());
         assert_eq!(app.world().resource::<CesiumStatus>().resident_tiles, 0);
+    }
+    #[test]
+    fn selection_receives_only_prepared_resident_tiles() {
+        let mut app = controlled_app();
+        step(&mut app, vec![packet(1), packet(2)], vec![1, 2], vec![]);
+        acknowledge(&mut app, 1);
+        step(&mut app, vec![], vec![1, 2], vec![]);
+        step(&mut app, vec![], vec![1, 2], vec![]);
+        assert_eq!(
+            app.world()
+                .non_send::<NativeSession<ControlledBackend>>()
+                .session
+                .render_ready,
+            HashSet::from([1])
+        );
+        assert!(visible_entities(&mut app).is_empty());
+        acknowledge(&mut app, 2);
+        step(&mut app, vec![], vec![1, 2], vec![]);
+        step(&mut app, vec![], vec![1, 2], vec![]);
+        assert_eq!(
+            app.world()
+                .non_send::<NativeSession<ControlledBackend>>()
+                .session
+                .render_ready,
+            HashSet::from([1, 2])
+        );
+        step(&mut app, vec![], vec![], vec![1, 2]);
+        step(&mut app, vec![], vec![], vec![]);
+        assert!(
+            app.world()
+                .non_send::<NativeSession<ControlledBackend>>()
+                .session
+                .render_ready
+                .is_empty()
+        );
+    }
+    #[test]
+    fn pending_imagery_does_not_block_another_ready_region() {
+        let mut app = controlled_app();
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        acknowledge(&mut app, 1);
+        step(&mut app, vec![], vec![1], vec![]);
+        let old = visible_entities(&mut app)[0];
+        step(&mut app, vec![packet(1), packet(2)], vec![1, 2], vec![]);
+        acknowledge(&mut app, 2);
+        step(&mut app, vec![], vec![1, 2], vec![]);
+        let visible = visible_entities(&mut app);
+        assert_eq!(visible.len(), 2);
+        assert!(visible.contains(&old));
+        assert_eq!(
+            app.world().resource::<CesiumStatus>().pending_render_tiles,
+            1
+        );
+        assert!(!app.world().resource::<CesiumStatus>().ready_for_capture());
+        acknowledge(&mut app, 1);
+        step(&mut app, vec![], vec![1, 2], vec![]);
+        assert_eq!(visible_entities(&mut app).len(), 2);
+        assert!(app.world().get_entity(old).is_err());
     }
     #[test]
     fn superseded_and_evicted_pending_revisions_are_cleaned_up() {

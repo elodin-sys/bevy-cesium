@@ -30,6 +30,8 @@ impl Default for Options {
 /// Owned data only. Backends never modify application cameras, lights or exposure.
 pub trait Backend: Sized + 'static {
     fn open(source: &CesiumSource, options: Options) -> Result<Self, BackendError>;
+    /// Report resident tiles whose meshes and materials are prepared for rendering.
+    fn set_render_ready(&mut self, _ids: impl IntoIterator<Item = u64>) {}
     fn update(&mut self, views: &[CesiumView], seconds: f32) -> Result<Frame, BackendError>;
 }
 #[derive(Clone, Copy, Debug)]

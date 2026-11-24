@@ -211,6 +211,7 @@ fn session() -> Session {
         retry_after: HashMap::new(),
         elapsed: 0.0,
         resident: HashMap::new(),
+        render_ready: None,
         tile_credits: HashMap::new(),
         clock: 0,
         root_pending: false,
@@ -428,6 +429,147 @@ fn replacement_waits_for_every_visible_child() {
     );
     assert_eq!(visible, vec![1, 2]);
 }
+#[test]
+fn decoded_children_wait_for_render_preparation_without_eviction() {
+    let mut s = session();
+    s.cache_bytes = 0;
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.resident
+        .extend([(0, (10, 0)), (1, (10, 0)), (2, (10, 0))]);
+    s.set_render_ready([0, 1]);
+    for _ in 0..3 {
+        let f = s.update(&[view()], 0.1).unwrap();
+        assert_eq!(f.visible, [0]);
+        assert!(f.removed.is_empty());
+        assert!(!f.selection_complete);
+        assert_eq!(s.stats.requests, 0);
+    }
+    s.set_render_ready([0, 1, 2]);
+    let f = s.update(&[view()], 0.1).unwrap();
+    assert_eq!(f.visible, [1, 2]);
+    assert_eq!(f.removed, [0]);
+    assert!(f.selection_complete);
+}
+
+#[test]
+fn ready_regions_refine_while_a_sibling_keeps_its_coarse_coverage() {
+    let mut s = session();
+    s.nodes[0].url = None;
+    s.nodes[0].children = vec![1, 2];
+    s.nodes
+        .extend([node(), node(), node(), node(), node(), node()]);
+    s.nodes[1].children = vec![3, 4];
+    s.nodes[2].children = vec![5, 6];
+    s.resident.extend((1..=6).map(|id| (id, (10, 0))));
+    s.set_render_ready([1, 2, 3, 4, 5]);
+    let f = s.update(&[view()], 0.1).unwrap();
+    assert_eq!(f.visible, [3, 4, 2]);
+    assert!(!f.selection_complete);
+    s.set_render_ready(1..=6);
+    assert_eq!(s.update(&[view()], 0.1).unwrap().visible, [3, 4, 5, 6]);
+}
+
+#[test]
+fn zoom_out_preserves_children_until_parent_is_render_ready() {
+    let mut s = session();
+    s.cache_bytes = 0;
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.resident.extend([(1, (10, 0)), (2, (10, 0))]);
+    s.pending.insert(0);
+    s.set_render_ready([1, 2]);
+    s.maximum_screen_error = 1e9;
+    let f = s.update(&[view()], 0.1).unwrap();
+    assert_eq!(f.visible, [1, 2]);
+    assert!(f.removed.is_empty());
+    assert!(!f.selection_complete);
+    s.pending.remove(&0);
+    s.resident.insert(0, (10, 0));
+    let f = s.update(&[view()], 0.1).unwrap();
+    assert_eq!(f.visible, [1, 2]);
+    assert!(f.removed.is_empty());
+    s.set_render_ready([0, 1, 2]);
+    let f = s.update(&[view()], 0.1).unwrap();
+    assert_eq!(f.visible, [0]);
+    assert_eq!(f.removed.len(), 2);
+    assert!(f.selection_complete);
+}
+
+#[test]
+fn failed_sibling_keeps_parent_coverage() {
+    let mut s = session();
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.resident.extend([(0, (10, 0)), (1, (10, 0))]);
+    s.set_render_ready([0, 1]);
+    s.failed.insert(2);
+    for _ in 0..3 {
+        let f = s.update(&[view()], 100.).unwrap();
+        assert_eq!(f.visible, [0]);
+        assert!(f.load_failed);
+        assert!(!f.selection_complete);
+    }
+}
+
+#[test]
+fn pan_away_and_back_reuses_resident_content_within_budget() {
+    let mut s = session();
+    s.resident.insert(0, (100, 0));
+    s.set_render_ready([0]);
+    let mut away = view();
+    away.direction[2] = 1.;
+    for _ in 0..10 {
+        let f = s.update(&[away], 0.1).unwrap();
+        assert!(f.visible.is_empty());
+        assert!(f.removed.is_empty());
+        assert_eq!(s.update(&[view()], 0.1).unwrap().visible, [0]);
+    }
+    assert_eq!(s.stats.requests, 0);
+    assert_eq!(s.stats.resident_bytes, 100);
+}
+
+#[test]
+fn requests_prioritize_coarse_coverage_then_nearby_siblings() {
+    let mut s = session();
+    let fixture = Url::from_file_path(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/data/triangle.gltf"),
+    )
+    .unwrap();
+    s.nodes[0].url = Some(fixture.clone());
+    s.nodes[0].children = (1..=5).rev().collect();
+    for i in 1..=5 {
+        let mut child = node();
+        child.depth = 1;
+        child.center.z = -(i as f64);
+        child.url = Some(fixture.clone());
+        s.nodes.push(child);
+    }
+    // A nearer grandchild must not overtake coarse sibling coverage.
+    s.nodes[5].children = vec![6];
+    let mut detail = node();
+    detail.depth = 2;
+    detail.center.z = 5.;
+    detail.url = Some(fixture);
+    s.nodes.push(detail);
+    s.update(&[view()], 0.).unwrap();
+    assert_eq!(s.pending, HashSet::from([0, 1, 2, 3]));
+    assert_eq!(s.stats.requests, 4);
+}
+
+#[test]
+fn request_distance_ignores_cameras_looking_away_from_the_tile() {
+    let mut s = session();
+    s.nodes.push(node());
+    s.nodes[1].center.z = -100.;
+    let mut away = view();
+    away.position[2] = -103.;
+    assert!(s.nodes[1].screen_error(&away).is_none());
+    let mut wanted = vec![1, 0];
+    s.prioritize_requests(&mut wanted, &[view(), away]);
+    assert_eq!(wanted, [0, 1]);
+}
+
 #[test]
 fn multiple_cameras_union_and_additive_refinement() {
     let mut s = session();

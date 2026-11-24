@@ -46,7 +46,7 @@ native SDK.
 Pin the release in your application's `Cargo.toml`:
 
 ```toml
-bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.1" }
+bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.2" }
 ```
 
 - **Rust dependency:** Cargo fetches Bevy-Cesium and `tiles-core` from Git.
@@ -134,6 +134,16 @@ The browser loader implements a subset of Cesium Native. It permits four tile
 jobs concurrently and responses up to 32 MiB; decoding runs on the browser
 thread. The unused-tile cache budget does not cap active tiles or GPU memory.
 Its source and licenses come from the [terrain demo](crates/tiles-core/README.md).
+
+The Rust loader requests coarse coverage before finer levels, with nearer bounds
+first within each level. Prepared resources retain priority over provider reads.
+Regions refine independently once their replacement meshes and materials are
+prepared. Parents cover incomplete child sets; cached children cover zoom-out
+transitions until their parent is ready. Returning to tiles still in the unused
+cache does not refetch them. Evicted tiles can require another download.
+Imagery updates retain the previous image until the replacement is prepared,
+without blocking other ready regions. Capture readiness still waits for all
+selected revisions. These checks do not fence GPU execution.
 
 On native targets, `.with_lod_retention_margin(meters)` preserves acquired detail
 until it leaves every camera view plus the margin. Retention is off by default

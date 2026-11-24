@@ -12,5 +12,10 @@ Supports explicit 3D Tiles hierarchies, nested tilesets, glTF/GLB including
 Draco meshes, and bounded quantized-mesh terrain with optional geographic
 TMS imagery. This is not the full Cesium Native format/feature set.
 
+Consumers with asynchronous render preparation should call `set_render_ready`
+before `update`. Without feedback, decoded tiles are treated as render-ready.
+`Frame::selection_complete` also accounts for requested detail waiting for render
+preparation, rather than only in-flight downloads.
+
 Run `cargo test -p tiles-core` from the repository root. Fixtures are shared
 with the native backend in `tests/data/`. No ion credentials are needed.
