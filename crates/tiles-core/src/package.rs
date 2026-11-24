@@ -40,12 +40,12 @@ impl Package {
             || source.fragment().is_some()
             || token.is_some_and(|t| t.trim().is_empty() || t.contains(['\r', '\n']))
         {
-            return Err(Error("Invalid prepared terrain source"));
+            return Err(Error::Message("Invalid prepared terrain source"));
         }
         Ok(Self {
             base: source
                 .join(".")
-                .map_err(|_| Error("Invalid package location"))?,
+                .map_err(|_| Error::Message("Invalid package location"))?,
             token: token.map(str::to_owned),
             manifest: None,
             credentials: None,
@@ -54,21 +54,27 @@ impl Package {
 
     pub fn install(&mut self, bytes: &[u8]) -> Result<Url> {
         let manifest: Manifest = serde_json::from_slice(bytes)
-            .map_err(|_| Error("Invalid prepared terrain manifest"))?;
+            .map_err(|_| Error::Message("Invalid prepared terrain manifest"))?;
         if manifest.version != 1 || manifest.ion_asset_id != 2275207 {
-            return Err(Error("Unsupported prepared terrain provider or version"));
+            return Err(Error::Message(
+                "Unsupported prepared terrain provider or version",
+            ));
         }
-        let root = Url::parse(&manifest.root).map_err(|_| Error("Invalid package root"))?;
+        let root =
+            Url::parse(&manifest.root).map_err(|_| Error::Message("Invalid package root"))?;
         if canonical(&root)?.as_str() != manifest.root
             || root.path() != "/v1/3dtiles/root.json"
             || !manifest.resources.contains_key(&manifest.root)
         {
-            return Err(Error("Invalid package root"));
+            return Err(Error::Message("Invalid package root"));
         }
         for (remote, local) in &manifest.resources {
-            let remote_url = Url::parse(remote).map_err(|_| Error("Invalid resource URL"))?;
+            let remote_url =
+                Url::parse(remote).map_err(|_| Error::Message("Invalid resource URL"))?;
             if canonical(&remote_url)?.as_str() != remote {
-                return Err(Error("Package resource contains access parameters"));
+                return Err(Error::Message(
+                    "Package resource contains access parameters",
+                ));
             }
             self.local(local)?;
         }
@@ -85,11 +91,11 @@ impl Package {
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
         {
-            return Err(Error("Invalid package asset path"));
+            return Err(Error::Message("Invalid package asset path"));
         }
         self.base
             .join(relative)
-            .map_err(|_| Error("Invalid package asset path"))
+            .map_err(|_| Error::Message("Invalid package asset path"))
     }
 
     pub fn request(&self, url: &Url) -> Result<Request> {
@@ -119,7 +125,7 @@ impl Package {
             });
         }
         if self.token.is_none() {
-            return Err(Error("Terrain is not in the offline package"));
+            return Err(Error::Message("Terrain is not in the offline package"));
         }
         Ok(Request::Provider(url))
     }
@@ -132,7 +138,9 @@ pub(crate) fn canonical(url: &Url) -> Result<Url> {
         || url.password().is_some()
         || url.fragment().is_some()
     {
-        return Err(Error("Unsupported prepared terrain resource origin"));
+        return Err(Error::Message(
+            "Unsupported prepared terrain resource origin",
+        ));
     }
     let mut pairs: Vec<_> = url
         .query_pairs()
@@ -156,9 +164,9 @@ impl GoogleSession {
             .find(|(k, _)| k == "key")
             .map(|(_, v)| v.into_owned())
             .filter(|s| !s.is_empty())
-            .ok_or(Error("Missing Photo 3D access key"))?;
+            .ok_or(Error::Message("Missing Photo 3D access key"))?;
         let document: serde_json::Value =
-            serde_json::from_slice(bytes).map_err(|_| Error("Invalid Photo 3D root"))?;
+            serde_json::from_slice(bytes).map_err(|_| Error::Message("Invalid Photo 3D root"))?;
         fn find(value: &serde_json::Value, base: &Url) -> Option<String> {
             match value {
                 serde_json::Value::Object(object) => {

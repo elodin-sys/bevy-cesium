@@ -53,8 +53,8 @@ pub(crate) fn parse_tileset_at(
     struct Tileset {
         root: JsonTile,
     }
-    let data: Tileset =
-        serde_json::from_slice(bytes).map_err(|_| Error("Invalid or unsupported tileset JSON"))?;
+    let data: Tileset = serde_json::from_slice(bytes)
+        .map_err(|_| Error::Message("Invalid or unsupported tileset JSON"))?;
     let mut nodes = Vec::new();
     append(data.root, parent, add, base, &mut nodes, depth)?;
     Ok(nodes)
@@ -72,7 +72,7 @@ fn append(
         || tile.implicit_tiling.is_some()
         || tile.contents.is_some()
     {
-        return Err(Error("Unsupported tileset hierarchy"));
+        return Err(Error::Message("Unsupported tileset hierarchy"));
     }
     let transform = parent
         * tile
@@ -80,7 +80,7 @@ fn append(
             .map(|v| DMat4::from_cols_array(&v))
             .unwrap_or(DMat4::IDENTITY);
     if !transform.is_finite() || transform.determinant().abs() < 1e-20 {
-        return Err(Error("Invalid tile transform"));
+        return Err(Error::Message("Invalid tile transform"));
     }
     let (center, radius) = if let Some(b) = tile.bounding_volume.axes {
         let axis = |i| transform.transform_vector3(DVec3::new(b[i], b[i + 1], b[i + 2]));
@@ -105,7 +105,7 @@ fn append(
     } else if let Some(region) = tile.bounding_volume.region {
         crate::geography::region_sphere(region)?
     } else {
-        return Err(Error("Unsupported bounding volume"));
+        return Err(Error::Message("Unsupported bounding volume"));
     };
     if !center.is_finite()
         || !radius.is_finite()
@@ -113,13 +113,13 @@ fn append(
         || !tile.geometric_error.is_finite()
         || tile.geometric_error < 0.
     {
-        return Err(Error("Invalid tile bounds/error"));
+        return Err(Error::Message("Invalid tile bounds/error"));
     }
     let add = match tile.refine.as_deref() {
         Some("ADD") => true,
         Some("REPLACE") => false,
         None => inherited_add,
-        _ => return Err(Error("Unknown refinement")),
+        _ => return Err(Error::Message("Unknown refinement")),
     };
     let url = tile
         .content

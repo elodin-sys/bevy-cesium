@@ -16,13 +16,13 @@ pub(crate) struct Grant {
 impl Ion {
     pub fn new(asset: i64, token: &str) -> Result<Self> {
         if asset <= 0 || token.trim().is_empty() || token.contains(['\r', '\n']) {
-            return Err(Error("Invalid ion asset or token"));
+            return Err(Error::Message("Invalid ion asset or token"));
         }
         Ok(Self {
             endpoint: Url::parse(&format!(
                 "https://api.cesium.com/v1/assets/{asset}/endpoint"
             ))
-            .map_err(|_| Error("Invalid ion endpoint"))?,
+            .map_err(|_| Error::Message("Invalid ion endpoint"))?,
             token: token.into(),
             grant: None,
         })
@@ -53,23 +53,26 @@ struct Attribution {
 }
 impl Grant {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let e: Endpoint =
-            serde_json::from_slice(bytes).map_err(|_| Error("Invalid ion endpoint response"))?;
+        let e: Endpoint = serde_json::from_slice(bytes)
+            .map_err(|_| Error::Message("Invalid ion endpoint response"))?;
         let external = e.external_type.as_deref();
         let kind = external.unwrap_or(e.kind.as_str());
         if !matches!(kind, "3DTILES" | "TERRAIN") || external.is_some_and(|t| t != "3DTILES") {
-            return Err(Error("Unsupported ion asset type or external provider"));
+            return Err(Error::Message(
+                "Unsupported ion asset type or external provider",
+            ));
         }
         let endpoint_url = if external.is_some() {
             e.options.map(|o| o.url).unwrap_or(e.url)
         } else {
             e.url
         };
-        let mut url = Url::parse(&endpoint_url).map_err(|_| Error("Invalid ion asset URL"))?;
+        let mut url =
+            Url::parse(&endpoint_url).map_err(|_| Error::Message("Invalid ion asset URL"))?;
         if kind == "TERRAIN" {
             url = url
                 .join("layer.json")
-                .map_err(|_| Error("Invalid terrain endpoint"))?;
+                .map_err(|_| Error::Message("Invalid terrain endpoint"))?;
         }
         if url.scheme() != "https" && !(cfg!(test) && url.scheme() == "http")
             || !url.username().is_empty()
@@ -77,7 +80,7 @@ impl Grant {
             || (external.is_none() && e.access_token.is_empty())
             || e.access_token.contains(['\r', '\n'])
         {
-            return Err(Error("Invalid ion asset URL or access token"));
+            return Err(Error::Message("Invalid ion asset URL or access token"));
         }
         Ok(Self {
             url,
@@ -125,7 +128,7 @@ mod tests {
         assert!(Ion::new(0, "secret").is_err());
         assert!(Ion::new(1, "secret\n").is_err());
         let error = Grant::parse(br#"{"type":"3DTILES","externalType":"GOOGLE_3D_TILES","url":"https://secret.example/","accessToken":"secret"}"#).err().unwrap();
-        assert!(error.0.contains("Unsupported"));
+        assert!(error.message().contains("Unsupported"));
         assert!(!error.to_string().contains("secret"));
     }
 }
