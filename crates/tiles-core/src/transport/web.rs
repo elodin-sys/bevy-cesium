@@ -1,5 +1,6 @@
 use crate::ion::{Grant, Ion};
 use crate::{Completion, Error, Payload, Result, Tile, content, parse_root};
+use crate::{HttpError, HttpSource};
 use glam::DMat4;
 use js_sys::{Reflect, Uint8Array};
 use std::{cell::RefCell, rc::Rc};
@@ -46,27 +47,34 @@ impl Loader {
         let Some(manifest_url) = manifest_url else {
             return Ok(url);
         };
-        let bytes = fetch_restricted(&manifest_url, None, true).await?;
+        let bytes = fetch_restricted(&manifest_url, None, true)
+            .await
+            .map_err(|e| e.with_source(HttpSource::Package))?;
         self.3
             .borrow_mut()
             .as_mut()
-            .ok_or(Error("Package unavailable"))?
+            .ok_or(Error::Message("Package unavailable"))?
             .install(&bytes)
     }
     async fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
         let ion = {
             let state = self.3.borrow();
-            let package = state.as_ref().ok_or(Error("Package unavailable"))?;
+            let package = state
+                .as_ref()
+                .ok_or(Error::Message("Package unavailable"))?;
             if !refresh && let Some(credentials) = &package.credentials {
                 return credentials.authorize(url);
             }
             let manifest = package
                 .manifest
                 .as_ref()
-                .ok_or(Error("Missing package manifest"))?;
+                .ok_or(Error::Message("Missing package manifest"))?;
             Ion::new(
                 manifest.ion_asset_id,
-                package.token.as_deref().ok_or(Error("Offline terrain"))?,
+                package
+                    .token
+                    .as_deref()
+                    .ok_or(Error::Message("Offline terrain"))?,
             )?
         };
         let grant = Grant::parse(&fetch_authorized(&ion.endpoint, Some(&ion.token)).await?)?;
@@ -77,7 +85,7 @@ impl Loader {
         self.3
             .borrow_mut()
             .as_mut()
-            .ok_or(Error("Package unavailable"))?
+            .ok_or(Error::Message("Package unavailable"))?
             .credentials = Some(credentials);
         self.1.borrow_mut().extend(grant.credits);
         Ok(authorized)
@@ -111,7 +119,9 @@ impl Loader {
     async fn refresh(&self) -> Result<Url> {
         let (endpoint, token) = {
             let state = self.0.borrow();
-            let ion = state.as_ref().ok_or(Error("Missing ion configuration"))?;
+            let ion = state
+                .as_ref()
+                .ok_or(Error::Message("Missing ion configuration"))?;
             (ion.endpoint.clone(), ion.token.clone())
         };
         let grant = Grant::parse(&fetch_authorized(&endpoint, Some(&token)).await?)?;
@@ -119,7 +129,7 @@ impl Loader {
         self.0
             .borrow_mut()
             .as_mut()
-            .ok_or(Error("Missing ion configuration"))?
+            .ok_or(Error::Message("Missing ion configuration"))?
             .grant = Some(grant);
         Ok(url)
     }
@@ -133,25 +143,40 @@ impl Loader {
         if let Some(request) = request {
             let remote = match request {
                 crate::package::Request::Local(local) => {
-                    return fetch_restricted(&local, None, true).await;
+                    return fetch_restricted(&local, None, true)
+                        .await
+                        .map_err(|e| e.with_source(HttpSource::Package));
                 }
                 crate::package::Request::Cached { local, remote } => {
-                    match fetch_restricted(&local, None, true).await {
+                    match fetch_restricted(&local, None, true)
+                        .await
+                        .map_err(|e| e.with_source(HttpSource::Package))
+                    {
                         Ok(bytes) => return Ok(bytes),
-                        Err(Error("HTTP not found")) => remote,
+                        Err(e) if e.status() == Some(404) => remote,
                         Err(error) => return Err(error),
                     }
                 }
                 crate::package::Request::Provider(remote) => remote,
             };
-            let authorized = self.provider_url(&remote, false).await?;
-            let result = fetch_restricted(&authorized, None, true).await;
+            let authorized = self
+                .provider_url(&remote, false)
+                .await
+                .map_err(|e| e.with_source(HttpSource::Provider))?;
+            let result = fetch_restricted(&authorized, None, true)
+                .await
+                .map_err(|e| e.with_source(HttpSource::Provider));
             if matches!(
-                result,
-                Err(Error("HTTP unauthorized" | "HTTP access denied"))
+                result.as_ref().err().and_then(|e| e.status()),
+                Some(401 | 403)
             ) {
-                let refreshed = self.provider_url(&remote, true).await?;
-                return fetch_restricted(&refreshed, None, true).await;
+                let refreshed = self
+                    .provider_url(&remote, true)
+                    .await
+                    .map_err(|e| e.with_source(HttpSource::Provider))?;
+                return fetch_restricted(&refreshed, None, true)
+                    .await
+                    .map_err(|e| e.with_source(HttpSource::Provider));
             } else {
                 return result;
             }
@@ -165,7 +190,7 @@ impl Loader {
             .filter(|g| g.authorizes(url))
             .map(|g| g.token.clone());
         let result = fetch_authorized(url, token.as_deref()).await;
-        if !matches!(result, Err(Error("HTTP unauthorized"))) || token.is_none() {
+        if result.as_ref().err().and_then(|e| e.status()) != Some(401) || token.is_none() {
             return result;
         }
         let unchanged = self
@@ -185,7 +210,7 @@ impl Loader {
             .and_then(|i| i.grant.as_ref())
             .filter(|g| g.authorizes(url))
             .map(|g| g.token.clone())
-            .ok_or(Error("Ion asset location changed; reopen source"))?;
+            .ok_or(Error::Message("Ion asset location changed; reopen source"))?;
         fetch_authorized(url, Some(&token)).await
     }
 
@@ -202,7 +227,7 @@ impl Loader {
                     loader.1.borrow_mut().extend(crate::root_credits(&b, &url));
                     let nodes = parse_root(&b, &url)?;
                     if loader.2.is_some() && nodes.iter().all(|n| n.terrain.is_none()) {
-                        return Err(Error("Imagery overlay requires a terrain layer"));
+                        return Err(Error::Message("Imagery overlay requires a terrain layer"));
                     }
                     Ok(nodes)
                 })
@@ -284,7 +309,7 @@ async fn decode_tile(
         let data = loader.fetch(&resource).await?;
         total += data.len();
         if total > 64 * 1024 * 1024 {
-            return Err(Error("External resource budget exceeded"));
+            return Err(Error::Message("External resource budget exceeded"));
         }
         resources.insert(resource, data);
     }
@@ -295,7 +320,7 @@ async fn decode_tile(
         resources
             .get(resource)
             .cloned()
-            .ok_or(Error("Resource was not prefetched"))
+            .ok_or(Error::Message("Resource was not prefetched"))
     })
 }
 
@@ -315,9 +340,10 @@ async fn fetch_authorized(url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
 async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Result<Vec<u8>> {
     const MAX: usize = 32 * 1024 * 1024;
     if !matches!(url.scheme(), "https" | "http") {
-        return Err(Error("Browser sources must use HTTP or HTTPS"));
+        return Err(Error::Message("Browser sources must use HTTP or HTTPS"));
     }
-    let controller = AbortController::new().map_err(|_| Error("AbortController unavailable"))?;
+    let controller =
+        AbortController::new().map_err(|_| Error::Message("AbortController unavailable"))?;
     let abort = controller.clone();
     let guard = FetchGuard {
         controller,
@@ -330,37 +356,47 @@ async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Resul
     }
     init.set_signal(Some(&guard.controller.signal()));
     let request = Request::new_with_str_and_init(url.as_str(), &init)
-        .map_err(|_| Error("Invalid browser request"))?;
+        .map_err(|_| Error::Message("Invalid browser request"))?;
     request
         .headers()
         .set(
             "Accept",
             "application/vnd.quantized-mesh,application/octet-stream;q=0.9,application/json;q=0.8",
         )
-        .map_err(|_| Error("Invalid request header"))?;
+        .map_err(|_| Error::Message("Invalid request header"))?;
     if let Some(token) = token {
         request
             .headers()
             .set("Authorization", &format!("Bearer {token}"))
-            .map_err(|_| Error("Invalid access token"))?;
+            .map_err(|_| Error::Message("Invalid access token"))?;
     }
-    let window = web_sys::window().ok_or(Error("Browser window unavailable"))?;
+    let window = web_sys::window().ok_or(Error::Message("Browser window unavailable"))?;
     let response: Response = JsFuture::from(window.fetch_with_request(&request))
         .await
-        .map_err(|_| Error("HTTP request failed (network, CORS or timeout)"))?
+        .map_err(|_| {
+            Error::http(if guard.controller.signal().aborted() {
+                HttpError::Timeout
+            } else {
+                HttpError::BrowserNetwork
+            })
+        })?
         .dyn_into()
-        .map_err(|_| Error("Invalid HTTP response"))?;
-    if response.status() == 401 {
-        return Err(Error("HTTP unauthorized"));
-    }
-    if response.status() == 403 {
-        return Err(Error("HTTP access denied"));
-    }
-    if response.status() == 404 {
-        return Err(Error("HTTP not found"));
-    }
+        .map_err(|_| Error::Message("Invalid HTTP response"))?;
     if !response.ok() {
-        return Err(Error("HTTP status error"));
+        return Err(Error::Http {
+            kind: HttpError::Status(response.status()),
+            source: HttpSource::Source,
+            retry_after: crate::error::retry_after(
+                response
+                    .headers()
+                    .get("Retry-After")
+                    .ok()
+                    .flatten()
+                    .as_deref(),
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs_f64(js_sys::Date::now() / 1000.),
+            ),
+        });
     }
     if response
         .headers()
@@ -370,19 +406,19 @@ async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Resul
         .and_then(|n| n.parse::<usize>().ok())
         .is_some_and(|n| n > MAX)
     {
-        return Err(Error("Response exceeds 32 MiB limit"));
+        return Err(Error::Message("Response exceeds 32 MiB limit"));
     }
     let reader: ReadableStreamDefaultReader = response
         .body()
-        .ok_or(Error("Missing HTTP body"))?
+        .ok_or(Error::Message("Missing HTTP body"))?
         .get_reader()
         .dyn_into()
-        .map_err(|_| Error("HTTP stream unavailable"))?;
+        .map_err(|_| Error::Message("HTTP stream unavailable"))?;
     let mut bytes = Vec::new();
     loop {
         let chunk = JsFuture::from(reader.read())
             .await
-            .map_err(|_| Error("HTTP body failed"))?;
+            .map_err(|_| Error::http(HttpError::Body))?;
         if Reflect::get(&chunk, &JsValue::from_str("done"))
             .ok()
             .and_then(|v| v.as_bool())
@@ -391,10 +427,10 @@ async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Resul
             break;
         }
         let value = Reflect::get(&chunk, &JsValue::from_str("value"))
-            .map_err(|_| Error("Invalid HTTP body chunk"))?;
+            .map_err(|_| Error::Message("Invalid HTTP body chunk"))?;
         let data = Uint8Array::new(&value);
         if bytes.len() + data.length() as usize > MAX {
-            return Err(Error("Response exceeds 32 MiB limit"));
+            return Err(Error::Message("Response exceeds 32 MiB limit"));
         }
         let offset = bytes.len();
         bytes.resize(offset + data.length() as usize, 0);

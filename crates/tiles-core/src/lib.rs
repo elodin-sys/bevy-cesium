@@ -26,14 +26,8 @@ pub(crate) use transport::fetch;
 pub use tree::{Node, parse_tileset};
 use url::Url;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Error(pub &'static str);
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-impl std::error::Error for Error {}
+mod error;
+pub use error::{Error, HttpError, HttpSource};
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Clone, Copy, Debug)]
 pub struct View {
@@ -152,15 +146,15 @@ impl Session {
     /// Prepared assets stay within their package directory. An ion token enables
     /// cache-first Photo 3D fallback using a sibling `package.json` manifest.
     pub fn open_prepared(source: &str, ion_token: Option<&str>) -> Result<Self> {
-        let url = Url::parse(source).map_err(|_| Error("Invalid prepared source URL"))?;
+        let url = Url::parse(source).map_err(|_| Error::Message("Invalid prepared source URL"))?;
         let package = package::Package::new(&url, ion_token)?;
         Self::start(transport::Loader::prepared(package), Some(url))
     }
 
     pub fn open_terrain_url(source: &str, imagery: Option<terrain::Imagery>) -> Result<Self> {
-        let url = Url::parse(source).map_err(|_| Error("Invalid terrain URL"))?;
+        let url = Url::parse(source).map_err(|_| Error::Message("Invalid terrain URL"))?;
         if !matches!(url.scheme(), "https" | "http" | "file") {
-            return Err(Error("Unsupported source scheme"));
+            return Err(Error::Message("Unsupported source scheme"));
         }
         if let Some(i) = &imagery {
             i.url(terrain::TileAddress {
@@ -175,9 +169,9 @@ impl Session {
         )
     }
     pub fn open_url(source: &str) -> Result<Self> {
-        let url = Url::parse(source).map_err(|_| Error("Invalid source URL"))?;
+        let url = Url::parse(source).map_err(|_| Error::Message("Invalid source URL"))?;
         if !matches!(url.scheme(), "https" | "http" | "file") {
-            return Err(Error("Unsupported source scheme"));
+            return Err(Error::Message("Unsupported source scheme"));
         }
         Self::start(transport::Loader::default(), Some(url))
     }
@@ -225,7 +219,7 @@ impl Session {
             || !self.maximum_screen_error.is_finite()
             || self.maximum_screen_error <= 0.
         {
-            return Err(Error("Invalid camera or screen error"));
+            return Err(Error::Message("Invalid camera or screen error"));
         }
         self.clock += 1;
         self.elapsed += f64::from(seconds);
@@ -248,7 +242,7 @@ impl Session {
                     match result {
                         Ok(nodes) => self.nodes = nodes,
                         Err(e) => {
-                            frame.error = Some(e.0);
+                            frame.error = Some(e.message());
                             eprintln!("3D Tiles: {e}");
                             self.root_failed = true;
                         }
@@ -267,7 +261,12 @@ impl Session {
                         Ok(Payload::Hierarchy(mut nodes)) => {
                             if self.nodes.len() + nodes.len() > 100_000 || nodes.is_empty() {
                                 self.failed.insert(id);
-                                frame.error = Some("Tileset hierarchy limit exceeded");
+                                self.stats.failed_tiles += 1;
+                                frame.error = Some(if nodes.is_empty() {
+                                    "Empty external tileset"
+                                } else {
+                                    "Tileset hierarchy limit exceeded"
+                                });
                                 continue;
                             }
                             let offset = self.nodes.len();
@@ -281,10 +280,10 @@ impl Session {
                             self.nodes.extend(nodes);
                         }
                         Err(e) => {
-                            frame.error = Some(e.0);
+                            frame.error = Some(e.message());
                             eprintln!("3D Tiles tile {id}: {e}");
                             self.failed.insert(id);
-                            if e.0.starts_with("HTTP") {
+                            if e.message().starts_with("HTTP") {
                                 self.retry_after.insert(id, self.elapsed + 10.0);
                             }
                             self.stats.failed_tiles += 1;
@@ -571,11 +570,11 @@ impl Session {
 pub(crate) fn resolve(base: &Url, reference: &str) -> Result<Url> {
     let mut url = base
         .join(reference)
-        .map_err(|_| Error("Invalid resource URL"))?;
+        .map_err(|_| Error::Message("Invalid resource URL"))?;
     if !matches!(url.scheme(), "http" | "https" | "file")
         || (url.scheme() == "file" && base.scheme() != "file")
     {
-        return Err(Error("Resource scheme not allowed"));
+        return Err(Error::Message("Resource scheme not allowed"));
     }
     if google_url(base) && google_url(&url) {
         for key in ["key", "session"] {
@@ -605,7 +604,7 @@ fn html_escape(text: &str) -> String {
 
 fn parse_root(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
     let json: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|_| Error("Invalid source manifest"))?;
+        serde_json::from_slice(bytes).map_err(|_| Error::Message("Invalid source manifest"))?;
     if json.get("format").and_then(|s| s.as_str()) == Some("quantized-mesh-1.0") {
         terrain::layer(bytes, base)
     } else {

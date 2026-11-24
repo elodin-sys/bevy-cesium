@@ -29,7 +29,7 @@ impl Imagery {
             .all(|s| self.url_template.contains(s))
             || self.credit.trim().is_empty()
         {
-            return Err(Error(
+            return Err(Error::Message(
                 "Imagery requires a geographic TMS template and attribution",
             ));
         }
@@ -39,11 +39,11 @@ impl Imagery {
             .replace("{x}", &address.x.to_string())
             .replace("{y}", &address.y.to_string());
         if text.contains(['{', '}']) {
-            return Err(Error("Unknown imagery URL variable"));
+            return Err(Error::Message("Unknown imagery URL variable"));
         }
-        let url = Url::parse(&text).map_err(|_| Error("Invalid imagery URL"))?;
+        let url = Url::parse(&text).map_err(|_| Error::Message("Invalid imagery URL"))?;
         if !matches!(url.scheme(), "https" | "http" | "file") {
-            return Err(Error("Unsupported imagery URL"));
+            return Err(Error::Message("Unsupported imagery URL"));
         }
         Ok(url)
     }
@@ -51,7 +51,7 @@ impl Imagery {
 pub(crate) fn apply_image(p: &mut Primitive, bytes: &[u8]) -> Result<()> {
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|_| Error("Unknown imagery format"))?;
+        .map_err(|_| Error::Message("Unknown imagery format"))?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(4096);
     limits.max_image_height = Some(4096);
@@ -59,7 +59,7 @@ pub(crate) fn apply_image(p: &mut Primitive, bytes: &[u8]) -> Result<()> {
     reader.limits(limits);
     let image = reader
         .decode()
-        .map_err(|_| Error("Invalid or oversized imagery"))?
+        .map_err(|_| Error::Message("Invalid or oversized imagery"))?
         .into_rgba8();
     p.width = image.width();
     p.height = image.height();
@@ -102,7 +102,8 @@ struct Rectangle {
 }
 
 pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
-    let l: Layer = serde_json::from_slice(bytes).map_err(|_| Error("Invalid terrain layer"))?;
+    let l: Layer =
+        serde_json::from_slice(bytes).map_err(|_| Error::Message("Invalid terrain layer"))?;
     if l.format != "quantized-mesh-1.0"
         || l.projection.as_deref().is_some_and(|p| p != "EPSG:4326")
         || l.scheme.as_deref().is_some_and(|s| s != "tms")
@@ -111,18 +112,18 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
         || l.maxzoom > 24
         || l.tiles.is_empty()
     {
-        return Err(Error(
+        return Err(Error::Message(
             "Unsupported terrain projection, hierarchy or availability",
         ));
     }
     let mut available = BTreeSet::new();
     if let Some(levels) = l.available {
         if levels.len() > 25 {
-            return Err(Error("Terrain level limit exceeded"));
+            return Err(Error::Message("Terrain level limit exceeded"));
         }
         for (z, ranges) in levels.into_iter().enumerate() {
             if z as u32 > l.maxzoom {
-                return Err(Error("Terrain availability exceeds maxzoom"));
+                return Err(Error::Message("Terrain availability exceeds maxzoom"));
             }
             for r in ranges {
                 if r.start_x > r.end_x
@@ -131,13 +132,13 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
                     || r.end_y >= (1u32 << z)
                     || (r.end_x - r.start_x + 1) as u64 * (r.end_y - r.start_y + 1) as u64 > 60_000
                 {
-                    return Err(Error("Invalid terrain availability range"));
+                    return Err(Error::Message("Invalid terrain availability range"));
                 }
                 for x in r.start_x..=r.end_x {
                     for y in r.start_y..=r.end_y {
                         available.insert((z as u32, x, y));
                         if available.len() > 60_000 {
-                            return Err(Error("Terrain hierarchy limit exceeded"));
+                            return Err(Error::Message("Terrain hierarchy limit exceeded"));
                         }
                     }
                 }
@@ -145,7 +146,9 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
         }
     } else {
         if l.maxzoom > 6 {
-            return Err(Error("Large terrain requires explicit static availability"));
+            return Err(Error::Message(
+                "Large terrain requires explicit static availability",
+            ));
         }
         for z in 0..=l.maxzoom {
             for x in 0..(2 << z) {
@@ -162,7 +165,7 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
         }
     }
     if keys.len() > 99_999 {
-        return Err(Error("Terrain hierarchy limit exceeded"));
+        return Err(Error::Message("Terrain hierarchy limit exceeded"));
     }
     let mut nodes = vec![Node {
         depth: 0,
@@ -185,7 +188,7 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
             .replace("{y}", &y.to_string())
             .replace("{version}", l.version.as_deref().unwrap_or("1.0.0"));
         if uri.contains(['{', '}']) {
-            return Err(Error("Unknown terrain URL variable"));
+            return Err(Error::Message("Unknown terrain URL variable"));
         }
         let url = if available.contains(&(z, x, y)) {
             Some(crate::resolve(base, &uri)?)
@@ -197,7 +200,7 @@ pub(crate) fn layer(bytes: &[u8], base: &Url) -> Result<Vec<Node>> {
             0
         } else {
             *ids.get(&(z - 1, x / 2, y / 2))
-                .ok_or(Error("Missing terrain ancestor"))?
+                .ok_or(Error::Message("Missing terrain ancestor"))?
         };
         nodes[parent].children.push(id);
         nodes.push(Node {
@@ -232,13 +235,13 @@ impl Reader<'_> {
         let end = self
             .at
             .checked_add(N)
-            .ok_or(Error("Terrain length overflow"))?;
+            .ok_or(Error::Message("Terrain length overflow"))?;
         let value = self
             .bytes
             .get(self.at..end)
-            .ok_or(Error("Truncated terrain"))?
+            .ok_or(Error::Message("Truncated terrain"))?
             .try_into()
-            .map_err(|_| Error("Truncated terrain"))?;
+            .map_err(|_| Error::Message("Truncated terrain"))?;
         self.at = end;
         Ok(value)
     }
@@ -266,7 +269,7 @@ impl Reader<'_> {
 pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
     if address.level > 24 || address.x >= (2 << address.level) || address.y >= (1 << address.level)
     {
-        return Err(Error("Invalid terrain tile address"));
+        return Err(Error::Message("Invalid terrain tile address"));
     }
     let mut r = Reader { bytes, at: 0 };
     let center = DVec3::new(r.f64()?, r.f64()?, r.f64()?);
@@ -280,16 +283,16 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
         || low < -12_000.
         || high > 12_000.
     {
-        return Err(Error("Invalid terrain header"));
+        return Err(Error::Message("Invalid terrain header"));
     }
     for _ in 0..7 {
         if !r.f64()?.is_finite() {
-            return Err(Error("Invalid terrain header"));
+            return Err(Error::Message("Invalid terrain header"));
         }
     }
     let count = r.u32()? as usize;
     if !(3..=1_000_000).contains(&count) {
-        return Err(Error("Terrain vertex limit exceeded"));
+        return Err(Error::Message("Terrain vertex limit exceeded"));
     }
     let mut values = Vec::with_capacity(3 * count);
     for _ in 0..3 {
@@ -298,7 +301,7 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
             let code = r.u16()? as i32;
             value += (code >> 1) ^ (-(code & 1));
             if !(0..=32767).contains(&value) {
-                return Err(Error("Invalid terrain delta"));
+                return Err(Error::Message("Invalid terrain delta"));
             }
             values.push(value as f64 / 32767.);
         }
@@ -308,7 +311,7 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
     r.at = r.at.next_multiple_of(alignment);
     let triangles = r.u32()? as usize;
     if triangles == 0 || triangles > 2_000_000 {
-        return Err(Error("Terrain triangle limit exceeded"));
+        return Err(Error::Message("Terrain triangle limit exceeded"));
     }
     let mut indices = Vec::with_capacity(3 * triangles);
     let mut highest = 0u32;
@@ -317,7 +320,7 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
         let index = highest
             .checked_sub(code)
             .filter(|i| *i < count as u32)
-            .ok_or(Error("Invalid terrain index"))?;
+            .ok_or(Error::Message("Invalid terrain index"))?;
         indices.push(index);
         if code == 0 {
             highest += 1;
@@ -327,13 +330,13 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
     for _ in 0..4 {
         let size = r.u32()? as usize;
         if size > count {
-            return Err(Error("Terrain edge limit exceeded"));
+            return Err(Error::Message("Terrain edge limit exceeded"));
         }
         let mut edge = Vec::with_capacity(size);
         for _ in 0..size {
             let i = r.index(wide)?;
             if i >= count as u32 {
-                return Err(Error("Invalid terrain edge"));
+                return Err(Error::Message("Invalid terrain edge"));
             }
             edge.push(i);
         }
@@ -346,7 +349,7 @@ pub(crate) fn decode(bytes: &[u8], address: TileAddress) -> Result<Primitive> {
         r.at =
             r.at.checked_add(length)
                 .filter(|n| *n <= bytes.len())
-                .ok_or(Error("Truncated terrain extension"))?;
+                .ok_or(Error::Message("Truncated terrain extension"))?;
     }
     let region = address.region();
     let mut positions = Vec::<Vec3>::with_capacity(count);

@@ -321,16 +321,24 @@ fn prepared_detail_survives_missing_provider_siblings() {
 #[test]
 fn transient_failures_retry_after_delay_but_invalid_content_stays_failed() {
     let mut s = session();
-    s.tx.send(Completion::Content(0, Err(Error("HTTP request failed")), 0))
-        .unwrap();
+    s.tx.send(Completion::Content(
+        0,
+        Err(Error::Message("HTTP request failed")),
+        0,
+    ))
+    .unwrap();
     s.update(&[], 0.).unwrap();
     assert!(s.failed.contains(&0));
     s.update(&[], 9.).unwrap();
     assert!(s.failed.contains(&0));
     s.update(&[], 1.).unwrap();
     assert!(!s.failed.contains(&0));
-    s.tx.send(Completion::Content(0, Err(Error("Invalid glTF")), 0))
-        .unwrap();
+    s.tx.send(Completion::Content(
+        0,
+        Err(Error::Message("Invalid glTF")),
+        0,
+    ))
+    .unwrap();
     s.update(&[], 0.).unwrap();
     s.update(&[], 30.).unwrap();
     assert!(s.failed.contains(&0));
@@ -705,10 +713,35 @@ fn child_failure_preserves_parent_and_reports_error() {
     s.nodes[0].children = vec![1];
     s.nodes.push(node());
     s.resident.insert(0, (10, 0));
-    s.tx.send(Completion::Content(1, Err(Error("HTTP request failed")), 0))
-        .unwrap();
+    s.tx.send(Completion::Content(
+        1,
+        Err(Error::Message("HTTP request failed")),
+        0,
+    ))
+    .unwrap();
     let f = s.update(&[view()], 0.1).unwrap();
     assert_eq!(f.visible, vec![0]);
     assert!(f.load_failed);
     assert_eq!(f.pending, 0);
+}
+
+#[test]
+fn hierarchy_errors_are_distinct_and_leave_the_session_usable() {
+    let mut s = session();
+    s.nodes.extend((1..100_000).map(|_| node()));
+    for (id, nodes, expected) in [
+        (1, vec![], "Empty external tileset"),
+        (2, vec![node()], "Tileset hierarchy limit exceeded"),
+    ] {
+        s.tx.send(Completion::Content(id, Ok(Payload::Hierarchy(nodes)), 0))
+            .unwrap();
+        let frame = s.update(&[], 0.).unwrap();
+        assert_eq!(frame.error, Some(expected));
+        assert!(frame.load_failed);
+        assert_eq!(s.nodes.len(), 100_000);
+    }
+    assert_eq!(s.stats.failed_tiles, 2);
+    for _ in 0..1000 {
+        assert!(s.update(&[], 0.016).unwrap().load_failed);
+    }
 }

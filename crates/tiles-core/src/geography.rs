@@ -28,7 +28,7 @@ pub(crate) fn region_sphere(r: [f64; 6]) -> Result<(DVec3, f64)> {
         || low < -6_000_000.
         || high > 1e9
     {
-        return Err(Error("Invalid geographic region"));
+        return Err(Error::Message("Invalid geographic region"));
     }
     let width = if east < west {
         east + TAU - west

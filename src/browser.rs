@@ -38,7 +38,7 @@ impl Backend for BrowserBackend {
                 }),
             ),
         }
-        .map_err(|error| BackendError(error.0))?;
+        .map_err(|error| BackendError(error.message()))?;
         session.maximum_screen_error = options.maximum_screen_error;
         session.cache_bytes = options.unused_cache_bytes;
         Ok(Self(session))
@@ -64,7 +64,7 @@ impl Backend for BrowserBackend {
         let f = self
             .0
             .update(&views, seconds)
-            .map_err(|error| BackendError(error.0))?;
+            .map_err(|error| BackendError(error.message()))?;
         let complete = f.selection_complete;
         Ok(Frame {
             loaded: f

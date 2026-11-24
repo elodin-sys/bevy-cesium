@@ -14,7 +14,7 @@ pub(crate) fn external_tree(
         return Ok(None);
     }
     let value: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|_| Error("Invalid content JSON"))?;
+        serde_json::from_slice(bytes).map_err(|_| Error::Message("Invalid content JSON"))?;
     if value.get("root").is_none() {
         return Ok(None);
     }
@@ -40,9 +40,9 @@ pub(crate) fn credits(bytes: &[u8]) -> Result<Vec<String>> {
 fn word(b: &[u8], at: usize) -> Result<usize> {
     Ok(u32::from_le_bytes(
         b.get(at..at + 4)
-            .ok_or(Error("Truncated b3dm header"))?
+            .ok_or(Error::Message("Truncated b3dm header"))?
             .try_into()
-            .map_err(|_| Error("Bad header"))?,
+            .map_err(|_| Error::Message("Bad header"))?,
     ) as usize)
 }
 /// Decode a glTF/GLB or b3dm v1 tile, including Draco-compressed primitives.
@@ -55,48 +55,50 @@ fn prepare(bytes: &[u8], tile: DMat4) -> Result<(gltf::Gltf, DMat4)> {
     let mut root = tile;
     let glb = if bytes.starts_with(b"b3dm") {
         if word(bytes, 4)? != 1 || word(bytes, 8)? != bytes.len() {
-            return Err(Error("Invalid b3dm version or length"));
+            return Err(Error::Message("Invalid b3dm version or length"));
         }
         let feature_length = word(bytes, 12)?;
         let mut offset = 28usize;
         for at in [12, 16, 20, 24] {
             offset = offset
                 .checked_add(word(bytes, at)?)
-                .ok_or(Error("b3dm length overflow"))?;
+                .ok_or(Error::Message("b3dm length overflow"))?;
         }
         let feature = bytes
             .get(28..28 + feature_length)
-            .ok_or(Error("Truncated feature table"))?;
+            .ok_or(Error::Message("Truncated feature table"))?;
         if !feature.is_empty() {
-            let f: serde_json::Value =
-                serde_json::from_slice(feature).map_err(|_| Error("Invalid feature JSON"))?;
+            let f: serde_json::Value = serde_json::from_slice(feature)
+                .map_err(|_| Error::Message("Invalid feature JSON"))?;
             if let Some(center) = f.get("RTC_CENTER") {
                 let c: [f64; 3] = serde_json::from_value(center.clone())
-                    .map_err(|_| Error("Unsupported RTC_CENTER"))?;
+                    .map_err(|_| Error::Message("Unsupported RTC_CENTER"))?;
                 root *= DMat4::from_translation(DVec3::from_array(c));
             }
         }
-        bytes.get(offset..).ok_or(Error("Truncated b3dm payload"))?
+        bytes
+            .get(offset..)
+            .ok_or(Error::Message("Truncated b3dm payload"))?
     } else {
         bytes
     };
     let gltf = gltf::Gltf::from_slice_without_validation(glb)
-        .map_err(|_| Error("Invalid glTF payload"))?;
+        .map_err(|_| Error::Message("Invalid glTF payload"))?;
     validate(&gltf.document)?;
     if gltf.accessors().any(|a| a.count() > 6_000_000) {
-        return Err(Error("Accessor count limit exceeded"));
+        return Err(Error::Message("Accessor count limit exceeded"));
     }
     for extension in gltf.extensions_required() {
         if !matches!(
             extension,
             "KHR_draco_mesh_compression" | "KHR_materials_unlit"
         ) {
-            return Err(Error("Unsupported required glTF extension"));
+            return Err(Error::Message("Unsupported required glTF extension"));
         }
     }
     if let Some(rtc) = gltf.extension_value("CESIUM_RTC") {
         let c: [f64; 3] = serde_json::from_value(rtc["center"].clone())
-            .map_err(|_| Error("Invalid CESIUM_RTC"))?;
+            .map_err(|_| Error::Message("Invalid CESIUM_RTC"))?;
         root *= DMat4::from_translation(DVec3::from_array(c));
     }
     root *= DMat4::from_rotation_x(std::f64::consts::FRAC_PI_2);
@@ -114,19 +116,24 @@ pub(crate) fn decode_with(
     let mut total = 0usize;
     for b in gltf.buffers() {
         let data = match b.source() {
-            gltf::buffer::Source::Bin => gltf.blob.clone().ok_or(Error("Missing GLB buffer"))?,
+            gltf::buffer::Source::Bin => gltf
+                .blob
+                .clone()
+                .ok_or(Error::Message("Missing GLB buffer"))?,
             gltf::buffer::Source::Uri(uri) => resource(uri, url, load)?,
         };
         total += data.len();
         if data.len() < b.length() || total > 64 * 1024 * 1024 {
-            return Err(Error("Invalid buffer length or tile budget exceeded"));
+            return Err(Error::Message(
+                "Invalid buffer length or tile budget exceeded",
+            ));
         }
         buffers.push(data);
     }
     let scene = gltf
         .default_scene()
         .or_else(|| gltf.scenes().next())
-        .ok_or(Error("No glTF scene"))?;
+        .ok_or(Error::Message("No glTF scene"))?;
     let mut output = Vec::new();
     for node in scene.nodes() {
         visit(
@@ -141,19 +148,21 @@ pub(crate) fn decode_with(
         )?;
     }
     if output.is_empty() {
-        return Err(Error("No supported triangle primitives"));
+        return Err(Error::Message("No supported triangle primitives"));
     }
     Ok(output)
 }
 fn resource(uri: &str, base: &Url, load: &dyn Fn(&Url) -> Result<Vec<u8>>) -> Result<Vec<u8>> {
     if uri.starts_with("data:") {
-        let (header, encoded) = uri.split_once(',').ok_or(Error("Invalid data URI"))?;
+        let (header, encoded) = uri
+            .split_once(',')
+            .ok_or(Error::Message("Invalid data URI"))?;
         if !header.ends_with(";base64") || encoded.len() > 48 * 1024 * 1024 {
-            return Err(Error("Unsupported data URI"));
+            return Err(Error::Message("Unsupported data URI"));
         }
         base64::engine::general_purpose::STANDARD
             .decode(encoded)
-            .map_err(|_| Error("Invalid base64"))
+            .map_err(|_| Error::Message("Invalid base64"))
     } else {
         load(&crate::resolve(base, uri)?)
     }
@@ -162,7 +171,7 @@ fn slice<'a>(view: gltf::buffer::View<'_>, buffers: &'a [Vec<u8>]) -> Result<&'a
     buffers
         .get(view.buffer().index())
         .and_then(|b| b.get(view.offset()..view.offset().checked_add(view.length())?))
-        .ok_or(Error("Invalid buffer view"))
+        .ok_or(Error::Message("Invalid buffer view"))
 }
 #[allow(clippy::too_many_arguments)]
 fn visit(
@@ -176,54 +185,54 @@ fn visit(
     depth: usize,
 ) -> Result<()> {
     if depth > 48 || out.len() > 2048 {
-        return Err(Error("glTF complexity limit exceeded"));
+        return Err(Error::Message("glTF complexity limit exceeded"));
     }
     let m = node.transform().matrix().map(|c| c.map(f64::from));
     let transform = parent * DMat4::from_cols_array_2d(&m);
     if !transform.is_finite() {
-        return Err(Error("Invalid node transform"));
+        return Err(Error::Message("Invalid node transform"));
     }
     if let Some(mesh) = node.mesh() {
         for p in mesh.primitives() {
             if p.mode() != gltf::mesh::Mode::Triangles {
-                return Err(Error("Only triangle primitives are supported"));
+                return Err(Error::Message("Only triangle primitives are supported"));
             }
             let mat = p.material();
             let pbr = mat.pbr_metallic_roughness();
             let uv_set = pbr.base_color_texture().map_or(0, |t| t.tex_coord());
-            let (positions, mut normals, mut uvs, indices) = if let Some(d) =
-                p.extension_value("KHR_draco_mesh_compression")
-            {
-                let vi = d["bufferView"]
-                    .as_u64()
-                    .ok_or(Error("Missing Draco buffer view"))? as usize;
-                let view = doc
-                    .views()
-                    .nth(vi)
-                    .ok_or(Error("Draco view out of range"))?;
-                decode_draco(d, slice(view, buffers)?, uv_set)?
-            } else {
-                let reader = p.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
-                let positions: Vec<f32> = reader
-                    .read_positions()
-                    .ok_or(Error("Missing positions"))?
-                    .flatten()
-                    .collect();
-                let count = positions.len() / 3;
-                let normals = reader
-                    .read_normals()
-                    .map(|n| n.flatten().collect())
-                    .unwrap_or_default();
-                let uvs = reader
-                    .read_tex_coords(uv_set)
-                    .map(|v| v.into_f32().flatten().collect())
-                    .unwrap_or_default();
-                let indices = reader
-                    .read_indices()
-                    .map(|i| i.into_u32().collect())
-                    .unwrap_or_else(|| (0..count as u32).collect());
-                (positions, normals, uvs, indices)
-            };
+            let (positions, mut normals, mut uvs, indices) =
+                if let Some(d) = p.extension_value("KHR_draco_mesh_compression") {
+                    let vi = d["bufferView"]
+                        .as_u64()
+                        .ok_or(Error::Message("Missing Draco buffer view"))?
+                        as usize;
+                    let view = doc
+                        .views()
+                        .nth(vi)
+                        .ok_or(Error::Message("Draco view out of range"))?;
+                    decode_draco(d, slice(view, buffers)?, uv_set)?
+                } else {
+                    let reader = p.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
+                    let positions: Vec<f32> = reader
+                        .read_positions()
+                        .ok_or(Error::Message("Missing positions"))?
+                        .flatten()
+                        .collect();
+                    let count = positions.len() / 3;
+                    let normals = reader
+                        .read_normals()
+                        .map(|n| n.flatten().collect())
+                        .unwrap_or_default();
+                    let uvs = reader
+                        .read_tex_coords(uv_set)
+                        .map(|v| v.into_f32().flatten().collect())
+                        .unwrap_or_default();
+                    let indices = reader
+                        .read_indices()
+                        .map(|i| i.into_u32().collect())
+                        .unwrap_or_else(|| (0..count as u32).collect());
+                    (positions, normals, uvs, indices)
+                };
             let count = positions.len() / 3;
             if count == 0
                 || count > 1_000_000
@@ -231,7 +240,7 @@ fn visit(
                 || indices.iter().any(|i| *i as usize >= count)
                 || positions.iter().any(|v| !v.is_finite())
             {
-                return Err(Error("Invalid triangle geometry"));
+                return Err(Error::Message("Invalid triangle geometry"));
             }
             if normals.is_empty() {
                 normals = vec![0.; positions.len()];
@@ -257,7 +266,7 @@ fn visit(
                 || uvs.len() != count * 2
                 || normals.iter().chain(&uvs).any(|v| !v.is_finite())
             {
-                return Err(Error("Attribute size mismatch"));
+                return Err(Error::Message("Attribute size mismatch"));
             }
             let (pixels, width, height) = if let Some(texture) = pbr.base_color_texture() {
                 let image = texture.texture().source();
@@ -267,7 +276,7 @@ fn visit(
                 };
                 let mut reader = image::ImageReader::new(std::io::Cursor::new(encoded))
                     .with_guessed_format()
-                    .map_err(|_| Error("Image format error"))?;
+                    .map_err(|_| Error::Message("Image format error"))?;
                 let mut limits = image::Limits::default();
                 limits.max_image_width = Some(8192);
                 limits.max_image_height = Some(8192);
@@ -275,7 +284,7 @@ fn visit(
                 reader.limits(limits);
                 let decoded = reader
                     .decode()
-                    .map_err(|_| Error("Image decode failed"))?
+                    .map_err(|_| Error::Message("Image decode failed"))?
                     .into_rgba8();
                 let (w, h) = decoded.dimensions();
                 (decoded.into_raw(), w, h)
@@ -312,7 +321,7 @@ fn visit(
                 })
                 .sum();
             if allocated > 128 * 1024 * 1024 {
-                return Err(Error("Decoded tile exceeds prototype budget"));
+                return Err(Error::Message("Decoded tile exceeds prototype budget"));
             }
         }
     }
@@ -361,7 +370,7 @@ fn validate(doc: &gltf::Document) -> Result<()> {
     if valid {
         Ok(())
     } else {
-        Err(Error("Invalid glTF structure"))
+        Err(Error::Message("Invalid glTF structure"))
     }
 }
 fn decode_draco(d: &serde_json::Value, bytes: &[u8], uv_set: u32) -> Result<Geometry> {
@@ -374,18 +383,18 @@ fn decode_draco(d: &serde_json::Value, bytes: &[u8], uv_set: u32) -> Result<Geom
     let mut mesh = Mesh::new();
     MeshDecoder::new()
         .decode(&mut buffer, &mut mesh)
-        .map_err(|_| Error("Draco decode failed"))?;
+        .map_err(|_| Error::Message("Draco decode failed"))?;
     let attribute = |name: &str, components: usize| -> Result<Vec<f32>> {
         let Some(id) = d["attributes"][name].as_u64() else {
             return Ok(vec![]);
         };
         let a = mesh
             .attribute_by_unique_id(
-                u32::try_from(id).map_err(|_| Error("Invalid Draco attribute ID"))?,
+                u32::try_from(id).map_err(|_| Error::Message("Invalid Draco attribute ID"))?,
             )
-            .ok_or(Error("Missing Draco attribute"))?;
+            .ok_or(Error::Message("Missing Draco attribute"))?;
         if a.num_components() as usize != components {
-            return Err(Error("Wrong Draco attribute shape"));
+            return Err(Error::Message("Wrong Draco attribute shape"));
         }
         Ok(a.read_f32s(mesh.num_points(), components))
     };
@@ -424,7 +433,7 @@ pub(crate) fn external_resources(bytes: &[u8], base: &Url) -> Result<Vec<Url>> {
             urls.push(url);
         }
         if urls.len() > 256 {
-            return Err(Error("Too many external tile resources"));
+            return Err(Error::Message("Too many external tile resources"));
         }
     }
     Ok(urls)

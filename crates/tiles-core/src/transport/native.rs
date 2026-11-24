@@ -1,5 +1,6 @@
 use crate::ion::{Grant, Ion};
 use crate::{Completion, Error, Payload, Result, Tile, content, parse_root};
+use crate::{HttpError, HttpSource};
 use glam::DMat4;
 use std::sync::{Arc, Mutex};
 use std::{sync::mpsc::SyncSender, time::Duration};
@@ -51,7 +52,7 @@ impl Loader {
         let manifest_url = self
             .4
             .lock()
-            .map_err(|_| Error("Package unavailable"))?
+            .map_err(|_| Error::Message("Package unavailable"))?
             .as_ref()
             .filter(|p| p.token.is_some())
             .map(|p| p.local("package.json"))
@@ -59,31 +60,43 @@ impl Loader {
         let Some(manifest_url) = manifest_url else {
             return Ok(url);
         };
-        let bytes = fetch_restricted(&self.0, &manifest_url, None, true)?;
+        let bytes = fetch_restricted(&self.0, &manifest_url, None, true)
+            .map_err(|e| e.with_source(HttpSource::Package))?;
         self.4
             .lock()
-            .map_err(|_| Error("Package unavailable"))?
+            .map_err(|_| Error::Message("Package unavailable"))?
             .as_mut()
-            .ok_or(Error("Package unavailable"))?
+            .ok_or(Error::Message("Package unavailable"))?
             .install(&bytes)
     }
     fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
         // Share one grant between provider misses without holding the package
         // lock over network I/O: cached resources must remain readable meanwhile.
-        let _authorization = self.5.lock().map_err(|_| Error("Provider unavailable"))?;
+        let _authorization = self
+            .5
+            .lock()
+            .map_err(|_| Error::Message("Provider unavailable"))?;
         let ion = {
-            let state = self.4.lock().map_err(|_| Error("Package unavailable"))?;
-            let package = state.as_ref().ok_or(Error("Package unavailable"))?;
+            let state = self
+                .4
+                .lock()
+                .map_err(|_| Error::Message("Package unavailable"))?;
+            let package = state
+                .as_ref()
+                .ok_or(Error::Message("Package unavailable"))?;
             if !refresh && let Some(credentials) = &package.credentials {
                 return credentials.authorize(url);
             }
             let manifest = package
                 .manifest
                 .as_ref()
-                .ok_or(Error("Missing package manifest"))?;
+                .ok_or(Error::Message("Missing package manifest"))?;
             Ion::new(
                 manifest.ion_asset_id,
-                package.token.as_deref().ok_or(Error("Offline terrain"))?,
+                package
+                    .token
+                    .as_deref()
+                    .ok_or(Error::Message("Offline terrain"))?,
             )?
         };
         let grant = Grant::parse(&fetch_authorized(&self.0, &ion.endpoint, Some(&ion.token))?)?;
@@ -93,13 +106,13 @@ impl Loader {
         let authorized = credentials.authorize(url)?;
         self.4
             .lock()
-            .map_err(|_| Error("Package unavailable"))?
+            .map_err(|_| Error::Message("Package unavailable"))?
             .as_mut()
-            .ok_or(Error("Package unavailable"))?
+            .ok_or(Error::Message("Package unavailable"))?
             .credentials = Some(credentials);
         self.2
             .lock()
-            .map_err(|_| Error("Credits unavailable"))?
+            .map_err(|_| Error::Message("Credits unavailable"))?
             .extend(grant.credits);
         Ok(authorized)
     }
@@ -133,8 +146,13 @@ impl Loader {
         if let Some(url) = url {
             return Ok(url);
         }
-        let mut state = self.1.lock().map_err(|_| Error("Ion state unavailable"))?;
-        let ion = state.as_mut().ok_or(Error("Missing ion configuration"))?;
+        let mut state = self
+            .1
+            .lock()
+            .map_err(|_| Error::Message("Ion state unavailable"))?;
+        let ion = state
+            .as_mut()
+            .ok_or(Error::Message("Missing ion configuration"))?;
         ion.grant = Some(Grant::parse(&fetch_authorized(
             &self.0,
             &ion.endpoint,
@@ -144,46 +162,62 @@ impl Loader {
         *self
             .2
             .lock()
-            .map_err(|_| Error("Ion credits unavailable"))? = grant.credits.clone();
+            .map_err(|_| Error::Message("Ion credits unavailable"))? = grant.credits.clone();
         Ok(grant.url.clone())
     }
     fn fetch(&self, url: &Url) -> Result<Vec<u8>> {
         let request = self
             .4
             .lock()
-            .map_err(|_| Error("Package unavailable"))?
+            .map_err(|_| Error::Message("Package unavailable"))?
             .as_ref()
             .map(|p| p.request(url))
             .transpose()?;
         if let Some(request) = request {
             let remote = match request {
                 crate::package::Request::Local(local) => {
-                    return fetch_restricted(&self.0, &local, None, true);
+                    return fetch_restricted(&self.0, &local, None, true)
+                        .map_err(|e| e.with_source(HttpSource::Package));
                 }
                 crate::package::Request::Cached { local, remote } => {
-                    match fetch_restricted(&self.0, &local, None, true) {
+                    match fetch_restricted(&self.0, &local, None, true)
+                        .map_err(|e| e.with_source(HttpSource::Package))
+                    {
                         Ok(bytes) => return Ok(bytes),
-                        Err(Error("HTTP not found" | "File not found")) => remote,
+                        Err(e)
+                            if e.status() == Some(404) || e == Error::Message("File not found") =>
+                        {
+                            remote
+                        }
                         Err(error) => return Err(error),
                     }
                 }
                 crate::package::Request::Provider(remote) => remote,
             };
-            let authorized = self.provider_url(&remote, false)?;
-            let result = fetch_restricted(&self.0, &authorized, None, true);
+            let authorized = self
+                .provider_url(&remote, false)
+                .map_err(|e| e.with_source(HttpSource::Provider))?;
+            let result = fetch_restricted(&self.0, &authorized, None, true)
+                .map_err(|e| e.with_source(HttpSource::Provider));
             if matches!(
-                result,
-                Err(Error("HTTP unauthorized" | "HTTP access denied"))
+                result.as_ref().err().and_then(|e| e.status()),
+                Some(401 | 403)
             ) {
-                let refreshed = self.provider_url(&remote, true)?;
-                return fetch_restricted(&self.0, &refreshed, None, true);
+                let refreshed = self
+                    .provider_url(&remote, true)
+                    .map_err(|e| e.with_source(HttpSource::Provider))?;
+                return fetch_restricted(&self.0, &refreshed, None, true)
+                    .map_err(|e| e.with_source(HttpSource::Provider));
             } else {
                 return result;
             }
         }
 
         let token = {
-            let state = self.1.lock().map_err(|_| Error("Ion state unavailable"))?;
+            let state = self
+                .1
+                .lock()
+                .map_err(|_| Error::Message("Ion state unavailable"))?;
             state
                 .as_ref()
                 .and_then(|i| i.grant.as_ref())
@@ -191,12 +225,17 @@ impl Loader {
                 .map(|g| g.token.clone())
         };
         let result = fetch_authorized(&self.0, url, token.as_deref());
-        if !matches!(result, Err(Error("HTTP unauthorized"))) || token.is_none() {
+        if result.as_ref().err().and_then(|e| e.status()) != Some(401) || token.is_none() {
             return result;
         }
         let new_token = {
-            let mut state = self.1.lock().map_err(|_| Error("Ion state unavailable"))?;
-            let ion = state.as_mut().ok_or(Error("Missing ion configuration"))?;
+            let mut state = self
+                .1
+                .lock()
+                .map_err(|_| Error::Message("Ion state unavailable"))?;
+            let ion = state
+                .as_mut()
+                .ok_or(Error::Message("Missing ion configuration"))?;
             if ion.grant.as_ref().map(|g| &g.token) == token.as_ref() {
                 ion.grant = Some(Grant::parse(&fetch_authorized(
                     &self.0,
@@ -204,18 +243,21 @@ impl Loader {
                     Some(&ion.token),
                 )?)?);
             }
-            let g = ion.grant.as_ref().ok_or(Error("Missing ion grant"))?;
+            let g = ion
+                .grant
+                .as_ref()
+                .ok_or(Error::Message("Missing ion grant"))?;
             let mut credits = self
                 .2
                 .lock()
-                .map_err(|_| Error("Ion credits unavailable"))?;
+                .map_err(|_| Error::Message("Ion credits unavailable"))?;
             for credit in &g.credits {
                 if !credits.contains(credit) {
                     credits.push(credit.clone());
                 }
             }
             if !g.authorizes(url) {
-                return Err(Error("Ion asset location changed; reopen source"));
+                return Err(Error::Message("Ion asset location changed; reopen source"));
             }
             g.token.clone()
         };
@@ -233,11 +275,11 @@ impl Loader {
                         loader
                             .2
                             .lock()
-                            .map_err(|_| Error("Credits unavailable"))?
+                            .map_err(|_| Error::Message("Credits unavailable"))?
                             .extend(crate::root_credits(&b, &url));
                         let nodes = parse_root(&b, &url)?;
                         if loader.3.is_some() && nodes.iter().all(|n| n.terrain.is_none()) {
-                            return Err(Error("Imagery overlay requires a terrain layer"));
+                            return Err(Error::Message("Imagery overlay requires a terrain layer"));
                         }
                         Ok(nodes)
                     })
@@ -310,18 +352,20 @@ fn fetch_restricted(
     const MAX: u64 = 32 * 1024 * 1024;
     let mut bytes = Vec::new();
     if url.scheme() == "file" {
-        let p = url.to_file_path().map_err(|_| Error("Invalid file URL"))?;
+        let p = url
+            .to_file_path()
+            .map_err(|_| Error::Message("Invalid file URL"))?;
         std::fs::File::open(p)
             .map_err(|error| {
                 if error.kind() == std::io::ErrorKind::NotFound {
-                    Error("File not found")
+                    Error::Message("File not found")
                 } else {
-                    Error("File access failed")
+                    Error::Message("File access failed")
                 }
             })?
             .take(MAX + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| Error("File read failed"))?;
+            .map_err(|_| Error::Message("File read failed"))?;
     } else {
         let mut request = agent.get(url.as_str()).header(
             "Accept",
@@ -337,24 +381,40 @@ fn fetch_restricted(
         if let Some(token) = token {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
-        let mut response = request.call().map_err(|e| match e {
-            ureq::Error::StatusCode(401) => Error("HTTP unauthorized"),
-            ureq::Error::StatusCode(403) => Error("HTTP access denied"),
-            ureq::Error::StatusCode(404) => Error("HTTP not found"),
-            _ => Error("HTTP request failed"),
-        })?;
+        let mut response = request
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .call()
+            .map_err(|e| {
+                Error::http(match e {
+                    ureq::Error::Timeout(_) => HttpError::Timeout,
+                    ureq::Error::TooManyRedirects => HttpError::Redirect,
+                    _ => HttpError::Network,
+                })
+            })?;
         if !response.status().is_success() {
-            return Err(Error("HTTP redirect or unexpected status"));
+            return Err(Error::Http {
+                kind: HttpError::Status(response.status().as_u16()),
+                source: HttpSource::Source,
+                retry_after: crate::error::retry_after(
+                    response
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|v| v.to_str().ok()),
+                    std::time::SystemTime::now(),
+                ),
+            });
         }
         response
             .body_mut()
             .as_reader()
             .take(MAX + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| Error("HTTP body failed"))?;
+            .map_err(|_| Error::http(HttpError::Body))?;
     }
     if bytes.len() as u64 > MAX {
-        return Err(Error("Response exceeds 32 MiB limit"));
+        return Err(Error::Message("Response exceeds 32 MiB limit"));
     }
     Ok(bytes)
 }
@@ -365,6 +425,41 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::Instant;
+
+    #[test]
+    fn http_failures_preserve_status_source_and_retry_after_without_secrets() {
+        for status in [401, 403, 404, 429, 500, 503] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let root = Url::parse(&format!(
+                "http://{}/package/tileset.json",
+                listener.local_addr().unwrap()
+            ))
+            .unwrap();
+            let loader = Loader::prepared(crate::package::Package::new(&root, None).unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                assert!(stream.read(&mut [0; 4096]).unwrap() > 0);
+                write!(stream, "HTTP/1.1 {status} Error\r\nRetry-After: 42\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecret").unwrap();
+            });
+            let error = loader.fetch(&root).unwrap_err();
+            assert_eq!(
+                error,
+                Error::Http {
+                    kind: HttpError::Status(status),
+                    source: HttpSource::Package,
+                    retry_after: Some(42.)
+                }
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("HTTP {status} (prepared package); retry after 42.0s")
+            );
+            server.join().unwrap();
+        }
+    }
 
     #[test]
     fn offline_assets_reject_redirects_and_external_references() {
@@ -411,7 +506,7 @@ mod tests {
     fn only_missing_hybrid_files_fall_back_to_the_provider() {
         for (status, expected) in [
             (404, "Invalid ion asset or token"),
-            (403, "HTTP access denied"),
+            (403, "HTTP access denied (403)"),
         ] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let root = Url::parse(&format!(
@@ -439,7 +534,7 @@ mod tests {
                 )
                 .unwrap();
             });
-            assert_eq!(loader.fetch(&remote).unwrap_err().0, expected);
+            assert_eq!(loader.fetch(&remote).unwrap_err().message(), expected);
             server.join().unwrap();
         }
     }
