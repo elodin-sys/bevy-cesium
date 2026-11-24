@@ -106,6 +106,8 @@ pub struct Frame {
     pub credits: Vec<String>,
     pub pending: u32,
     pub load_failed: bool,
+    /// Every visible detail requirement is loaded and ready for rendering.
+    pub selection_complete: bool,
     pub error: Option<&'static str>,
 }
 #[derive(Default, Debug)]
@@ -136,6 +138,7 @@ pub struct Session {
     retry_after: HashMap<usize, f64>,
     elapsed: f64,
     resident: HashMap<usize, (usize, u64)>,
+    render_ready: Option<HashSet<u64>>,
     tile_credits: HashMap<usize, Vec<String>>,
     clock: u64,
     root_pending: bool,
@@ -190,6 +193,7 @@ impl Session {
             retry_after: HashMap::new(),
             elapsed: 0.0,
             resident: HashMap::new(),
+            render_ready: None,
             tile_credits: HashMap::new(),
             clock: 0,
             root_pending: true,
@@ -206,6 +210,14 @@ impl Session {
             None,
         )
     }
+    /// Report render-prepared tiles before selection. Without feedback, decoded
+    /// content is considered ready (for consumers without a separate renderer).
+    pub fn set_render_ready(&mut self, ids: impl IntoIterator<Item = u64>) {
+        let ready = self.render_ready.get_or_insert_default();
+        ready.clear();
+        ready.extend(ids);
+    }
+
     pub fn update(&mut self, views: &[View], seconds: f32) -> Result<Frame> {
         if !seconds.is_finite()
             || seconds < 0.
@@ -323,13 +335,30 @@ impl Session {
                 r.1 = self.clock;
             }
         }
-        // Prepared reads take priority. Reserve a slot for them even while
-        // provider requests hang, including on later camera movements.
-        wanted.sort_by_key(|id| {
-            self.nodes[*id]
+        let selection_complete = wanted.is_empty();
+        // Prepared reads take priority. Within each source, request coarse
+        // coverage before detail, then nearby bounds first. Reserve a slot for
+        // prepared reads even while provider requests hang on later camera moves.
+        let provider = |id: usize| {
+            self.nodes[id]
                 .url
                 .as_ref()
                 .is_some_and(|url| self.client.requires_provider(url))
+        };
+        let distance = |id: usize| {
+            let node = &self.nodes[id];
+            views
+                .iter()
+                .map(|v| {
+                    (DVec3::from_array(v.position).distance(node.center) - node.radius).max(0.0)
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        wanted.sort_by(|a, b| {
+            provider(*a)
+                .cmp(&provider(*b))
+                .then_with(|| self.nodes[*a].depth.cmp(&self.nodes[*b].depth))
+                .then_with(|| distance(*a).total_cmp(&distance(*b)))
         });
         let mut provider_pending = self
             .pending
@@ -394,6 +423,10 @@ impl Session {
         self.stats.resident_bytes = bytes;
         frame.pending = self.pending.len() as u32 + u32::from(self.root_pending);
         frame.load_failed = self.root_failed || !self.failed.is_empty();
+        frame.selection_complete = selection_complete
+            && frame.pending == 0
+            && !frame.load_failed
+            && !frame.visible.is_empty();
         let mut credits = HashMap::<&str, usize>::new();
         for id in &frame.visible {
             if let Some(items) = self.tile_credits.get(&(*id as usize)) {
@@ -432,7 +465,17 @@ impl Session {
             .fold(None, |s: Option<f64>, e| Some(s.unwrap_or(0.).max(e)));
         let Some(error) = score else { return true };
         let has = n.url.is_some();
-        let ready = self.resident.contains_key(&id);
+        let loaded = self.resident.contains_key(&id);
+        let ready = loaded
+            && self
+                .render_ready
+                .as_ref()
+                .is_none_or(|set| set.contains(&(id as u64)));
+        // Decoded descendants waiting for render preparation are part of the
+        // refining working set, even while a coarse ancestor covers them.
+        if loaded && !ready {
+            required.insert(id);
+        }
         let request_start = wanted.len();
         if !n.children.is_empty() && (!has || error > self.maximum_screen_error) {
             let before = visible.len();
@@ -470,8 +513,51 @@ impl Session {
             visible.push(id as u64);
         } else if has {
             wanted.push(id);
+            // On zoom-out, keep available detail until the coarser replacement
+            // is render-ready. Do not request extra detail just for this fallback.
+            if !n.add {
+                for child in &n.children {
+                    self.select_resident(*child, views, visible, required, prepared_only);
+                }
+            }
         }
         ready || !has
+    }
+
+    fn select_resident(
+        &self,
+        id: usize,
+        views: &[View],
+        visible: &mut Vec<u64>,
+        required: &mut HashSet<usize>,
+        prepared_only: bool,
+    ) {
+        let node = &self.nodes[id];
+        if !views.iter().any(|v| node.screen_error(v).is_some())
+            || (prepared_only
+                && node
+                    .url
+                    .as_ref()
+                    .is_some_and(|url| self.client.requires_provider(url)))
+        {
+            return;
+        }
+        if self.resident.contains_key(&id) {
+            required.insert(id);
+            if self
+                .render_ready
+                .as_ref()
+                .is_none_or(|set| set.contains(&(id as u64)))
+            {
+                visible.push(id as u64);
+                if !node.add {
+                    return;
+                }
+            }
+        }
+        for child in &node.children {
+            self.select_resident(*child, views, visible, required, prepared_only);
+        }
     }
 }
 

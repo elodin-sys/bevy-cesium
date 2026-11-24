@@ -53,6 +53,12 @@ impl Backend for NativeBackend {
             .map_err(|_| BackendError("Invalid LOD retention margin"))?;
         Ok(Self::Native(session))
     }
+    fn set_render_ready(&mut self, ids: impl IntoIterator<Item = u64>) {
+        if let Self::Prepared(backend) = self {
+            backend.set_render_ready(ids);
+        }
+    }
+
     fn update(
         &mut self,
         views: &[render::CesiumView],
