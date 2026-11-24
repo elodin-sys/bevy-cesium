@@ -339,27 +339,7 @@ impl Session {
         // Prepared reads take priority. Within each source, request coarse
         // coverage before detail, then nearby bounds first. Reserve a slot for
         // prepared reads even while provider requests hang on later camera moves.
-        let provider = |id: usize| {
-            self.nodes[id]
-                .url
-                .as_ref()
-                .is_some_and(|url| self.client.requires_provider(url))
-        };
-        let distance = |id: usize| {
-            let node = &self.nodes[id];
-            views
-                .iter()
-                .map(|v| {
-                    (DVec3::from_array(v.position).distance(node.center) - node.radius).max(0.0)
-                })
-                .fold(f64::INFINITY, f64::min)
-        };
-        wanted.sort_by(|a, b| {
-            provider(*a)
-                .cmp(&provider(*b))
-                .then_with(|| self.nodes[*a].depth.cmp(&self.nodes[*b].depth))
-                .then_with(|| distance(*a).total_cmp(&distance(*b)))
-        });
+        self.prioritize_requests(&mut wanted, views);
         let mut provider_pending = self
             .pending
             .iter()
@@ -442,6 +422,33 @@ impl Session {
             .extend(credits.into_iter().map(|(c, _)| html_escape(c)));
         Ok(frame)
     }
+    fn prioritize_requests(&self, wanted: &mut [usize], views: &[View]) {
+        // Score once per tile, using only cameras that can see its bounds.
+        let mut ranked: Vec<_> = wanted
+            .iter()
+            .map(|&id| {
+                let node = &self.nodes[id];
+                let provider = node
+                    .url
+                    .as_ref()
+                    .is_some_and(|url| self.client.requires_provider(url));
+                let distance = views
+                    .iter()
+                    .filter(|v| node.screen_error(v).is_some())
+                    .map(|v| {
+                        (DVec3::from_array(v.position).distance(node.center) - node.radius).max(0.0)
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                (id, (provider, node.depth, distance))
+            })
+            .collect();
+        ranked
+            .sort_by(|(_, a), (_, b)| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
+        for (target, (id, _)) in wanted.iter_mut().zip(ranked) {
+            *target = id;
+        }
+    }
+
     fn select(
         &self,
         id: usize,

@@ -545,9 +545,29 @@ fn requests_prioritize_coarse_coverage_then_nearby_siblings() {
         child.url = Some(fixture.clone());
         s.nodes.push(child);
     }
+    // A nearer grandchild must not overtake coarse sibling coverage.
+    s.nodes[5].children = vec![6];
+    let mut detail = node();
+    detail.depth = 2;
+    detail.center.z = 5.;
+    detail.url = Some(fixture);
+    s.nodes.push(detail);
     s.update(&[view()], 0.).unwrap();
     assert_eq!(s.pending, HashSet::from([0, 1, 2, 3]));
     assert_eq!(s.stats.requests, 4);
+}
+
+#[test]
+fn request_distance_ignores_cameras_looking_away_from_the_tile() {
+    let mut s = session();
+    s.nodes.push(node());
+    s.nodes[1].center.z = -100.;
+    let mut away = view();
+    away.position[2] = -103.;
+    assert!(s.nodes[1].screen_error(&away).is_none());
+    let mut wanted = vec![1, 0];
+    s.prioritize_requests(&mut wanted, &[view(), away]);
+    assert_eq!(wanted, [0, 1]);
 }
 
 #[test]
