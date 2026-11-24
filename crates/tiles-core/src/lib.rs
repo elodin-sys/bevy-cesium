@@ -4,6 +4,7 @@ mod content;
 mod geography;
 mod ion;
 mod package;
+mod retry;
 pub mod terrain;
 #[cfg(test)]
 mod tests;
@@ -130,6 +131,8 @@ pub struct Session {
     pending: HashSet<usize>,
     failed: HashSet<usize>,
     retry_after: HashMap<usize, f64>,
+    retry_attempts: HashMap<usize, u32>,
+    failure_log: retry::FailureLog,
     elapsed: f64,
     resident: HashMap<usize, (usize, u64)>,
     render_ready: Option<HashSet<u64>>,
@@ -185,6 +188,8 @@ impl Session {
             pending: HashSet::new(),
             failed: HashSet::new(),
             retry_after: HashMap::new(),
+            retry_attempts: HashMap::new(),
+            failure_log: retry::FailureLog::default(),
             elapsed: 0.0,
             resident: HashMap::new(),
             render_ready: None,
@@ -253,12 +258,14 @@ impl Session {
                     self.stats.transferred_bytes += bytes as u64;
                     match result {
                         Ok(Payload::Mesh(tile, credits)) => {
+                            self.retry_attempts.remove(&id);
                             self.tile_credits.insert(id, credits);
                             self.stats.decoded_tiles += 1;
                             self.resident.insert(id, (tile.bytes(), self.clock));
                             frame.loaded.push(tile);
                         }
                         Ok(Payload::Hierarchy(mut nodes)) => {
+                            self.retry_attempts.remove(&id);
                             if self.nodes.len() + nodes.len() > 100_000 || nodes.is_empty() {
                                 self.failed.insert(id);
                                 self.stats.failed_tiles += 1;
@@ -281,16 +288,21 @@ impl Session {
                         }
                         Err(e) => {
                             frame.error = Some(e.message());
-                            eprintln!("3D Tiles tile {id}: {e}");
+                            self.failure_log.record(id, e);
                             self.failed.insert(id);
-                            if e.message().starts_with("HTTP") {
-                                self.retry_after.insert(id, self.elapsed + 10.0);
+                            let attempt = self.retry_attempts.get(&id).copied().unwrap_or(0);
+                            if let Some(delay) = retry::delay(e, attempt, id) {
+                                self.retry_after.insert(id, self.elapsed + delay);
+                                self.retry_attempts.insert(id, attempt.saturating_add(1));
                             }
                             self.stats.failed_tiles += 1;
                         }
                     }
                 }
             }
+        }
+        if let Some((count, id, error)) = self.failure_log.take(self.elapsed) {
+            eprintln!("3D Tiles: {count} tile failure(s); example tile {id}: {error}");
         }
         let mut wanted = Vec::new();
         let mut required = HashSet::new();

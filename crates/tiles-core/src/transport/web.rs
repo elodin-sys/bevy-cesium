@@ -18,9 +18,29 @@ pub(crate) struct Loader(
     Rc<RefCell<Vec<String>>>,
     Rc<Option<crate::terrain::Imagery>>,
     Rc<RefCell<Option<crate::package::Package>>>,
+    Rc<RefCell<crate::retry::Cooldowns>>,
 );
 
 impl Loader {
+    async fn request(
+        &self,
+        url: &Url,
+        token: Option<&str>,
+        strict: bool,
+        source: HttpSource,
+    ) -> Result<Vec<u8>> {
+        self.4.borrow().check(source, js_sys::Date::now() / 1000.)?;
+        let result = fetch_restricted(url, token, strict)
+            .await
+            .map_err(|e| e.with_source(source));
+        if let Err(error) = result {
+            self.4
+                .borrow_mut()
+                .observe(error, js_sys::Date::now() / 1000.);
+        }
+        result
+    }
+
     pub(crate) fn requires_provider(&self, url: &Url) -> bool {
         self.3.borrow().as_ref().is_some_and(|package| {
             matches!(
@@ -47,9 +67,9 @@ impl Loader {
         let Some(manifest_url) = manifest_url else {
             return Ok(url);
         };
-        let bytes = fetch_restricted(&manifest_url, None, true)
-            .await
-            .map_err(|e| e.with_source(HttpSource::Package))?;
+        let bytes = self
+            .request(&manifest_url, None, true, HttpSource::Package)
+            .await?;
         self.3
             .borrow_mut()
             .as_mut()
@@ -77,9 +97,15 @@ impl Loader {
                     .ok_or(Error::Message("Offline terrain"))?,
             )?
         };
-        let grant = Grant::parse(&fetch_authorized(&ion.endpoint, Some(&ion.token)).await?)?;
+        let grant = Grant::parse(
+            &self
+                .request(&ion.endpoint, Some(&ion.token), false, HttpSource::Provider)
+                .await?,
+        )?;
         crate::package::canonical(&grant.url)?;
-        let bytes = fetch_restricted(&grant.url, None, true).await?;
+        let bytes = self
+            .request(&grant.url, None, true, HttpSource::Provider)
+            .await?;
         let credentials = crate::package::GoogleSession::from_root(&grant.url, &bytes)?;
         let authorized = credentials.authorize(url)?;
         self.3
@@ -98,6 +124,7 @@ impl Loader {
     pub(crate) fn ion(ion: Ion) -> Self {
         Self(
             Rc::new(RefCell::new(Some(ion))),
+            Rc::default(),
             Rc::default(),
             Rc::default(),
             Rc::default(),
@@ -143,15 +170,10 @@ impl Loader {
         if let Some(request) = request {
             let remote = match request {
                 crate::package::Request::Local(local) => {
-                    return fetch_restricted(&local, None, true)
-                        .await
-                        .map_err(|e| e.with_source(HttpSource::Package));
+                    return self.request(&local, None, true, HttpSource::Package).await;
                 }
                 crate::package::Request::Cached { local, remote } => {
-                    match fetch_restricted(&local, None, true)
-                        .await
-                        .map_err(|e| e.with_source(HttpSource::Package))
-                    {
+                    match self.request(&local, None, true, HttpSource::Package).await {
                         Ok(bytes) => return Ok(bytes),
                         Err(e) if e.status() == Some(404) => remote,
                         Err(error) => return Err(error),
@@ -163,9 +185,9 @@ impl Loader {
                 .provider_url(&remote, false)
                 .await
                 .map_err(|e| e.with_source(HttpSource::Provider))?;
-            let result = fetch_restricted(&authorized, None, true)
-                .await
-                .map_err(|e| e.with_source(HttpSource::Provider));
+            let result = self
+                .request(&authorized, None, true, HttpSource::Provider)
+                .await;
             if matches!(
                 result.as_ref().err().and_then(|e| e.status()),
                 Some(401 | 403)
@@ -174,9 +196,9 @@ impl Loader {
                     .provider_url(&remote, true)
                     .await
                     .map_err(|e| e.with_source(HttpSource::Provider))?;
-                return fetch_restricted(&refreshed, None, true)
-                    .await
-                    .map_err(|e| e.with_source(HttpSource::Provider));
+                return self
+                    .request(&refreshed, None, true, HttpSource::Provider)
+                    .await;
             } else {
                 return result;
             }
@@ -189,7 +211,9 @@ impl Loader {
             .and_then(|i| i.grant.as_ref())
             .filter(|g| g.authorizes(url))
             .map(|g| g.token.clone());
-        let result = fetch_authorized(url, token.as_deref()).await;
+        let result = self
+            .request(url, token.as_deref(), false, HttpSource::Source)
+            .await;
         if result.as_ref().err().and_then(|e| e.status()) != Some(401) || token.is_none() {
             return result;
         }
@@ -211,7 +235,8 @@ impl Loader {
             .filter(|g| g.authorizes(url))
             .map(|g| g.token.clone())
             .ok_or(Error::Message("Ion asset location changed; reopen source"))?;
-        fetch_authorized(url, Some(&token)).await
+        self.request(url, Some(&token), false, HttpSource::Source)
+            .await
     }
 
     pub(crate) fn load_root(&self, url: Option<Url>, sender: SyncSender<Completion>) {
