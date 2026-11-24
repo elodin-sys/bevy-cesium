@@ -46,7 +46,7 @@ native SDK.
 Pin the release in your application's `Cargo.toml`:
 
 ```toml
-bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.2" }
+bevy-cesium = { git = "https://github.com/elodin-sys/bevy-cesium", tag = "v0.5.3" }
 ```
 
 - **Rust dependency:** Cargo fetches Bevy-Cesium and `tiles-core` from Git.
