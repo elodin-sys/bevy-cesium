@@ -510,7 +510,18 @@ impl Session {
                 }
                 return (!has || ready) && all_ready;
             }
-            if all_ready && (!prepared_only || visible.len() > before || !has) {
+            if has {
+                // Refine a REPLACE tile only with a complete coarse child cover,
+                // including siblings just outside the cameras. Otherwise a pan
+                // can expose an unready sibling and repeatedly replace displayed
+                // detail with this parent. Keep this cover in the working set.
+                for child in &n.children {
+                    all_ready &= self.coarse_cover(*child, wanted, required, prepared_only);
+                }
+            }
+            // An in-view parent with all children culled is not covered. Its
+            // conservative bounds can still intersect a camera at grazing angles.
+            if all_ready && visible.len() > before {
                 return true;
             }
             if ready {
@@ -540,6 +551,86 @@ impl Session {
             }
         }
         ready || !has
+    }
+
+    /// Prepare one coarse content frontier, not offscreen detail. Contentless
+    /// hierarchy nodes are traversed to reach that frontier. Already complete
+    /// resident descendants can cover an evicted ancestor without re-fetching it.
+    fn coarse_cover(
+        &self,
+        id: usize,
+        wanted: &mut Vec<usize>,
+        required: &mut HashSet<usize>,
+        prepared_only: bool,
+    ) -> bool {
+        let node = &self.nodes[id];
+        if prepared_only
+            && node
+                .url
+                .as_ref()
+                .is_some_and(|url| self.client.requires_provider(url))
+        {
+            return true;
+        }
+        if self.resident.contains_key(&id) {
+            required.insert(id);
+            if self
+                .render_ready
+                .as_ref()
+                .is_none_or(|ready| ready.contains(&(id as u64)))
+            {
+                return true;
+            }
+            wanted.push(id);
+            return false;
+        }
+        // Check resident descendants without requesting a deeper frontier when
+        // this node has content of its own.
+        if node.url.is_some() {
+            if !node.add && self.resident_cover(id, required, prepared_only) {
+                return true;
+            }
+            wanted.push(id);
+            return false;
+        }
+        // A contentless leaf is an explicitly empty tile, not a pending load.
+        let mut covered = true;
+        for child in &node.children {
+            covered &= self.coarse_cover(*child, wanted, required, prepared_only);
+        }
+        covered
+    }
+
+    fn resident_cover(
+        &self,
+        id: usize,
+        required: &mut HashSet<usize>,
+        prepared_only: bool,
+    ) -> bool {
+        let node = &self.nodes[id];
+        if prepared_only
+            && node
+                .url
+                .as_ref()
+                .is_some_and(|url| self.client.requires_provider(url))
+        {
+            return true;
+        }
+        if self.resident.contains_key(&id) {
+            required.insert(id);
+            return self
+                .render_ready
+                .as_ref()
+                .is_none_or(|ready| ready.contains(&(id as u64)));
+        }
+        if node.add && node.url.is_some() {
+            return false;
+        }
+        let mut covered = node.url.is_none() || !node.children.is_empty();
+        for child in &node.children {
+            covered &= self.resident_cover(*child, required, prepared_only);
+        }
+        covered
     }
 
     fn select_resident(
