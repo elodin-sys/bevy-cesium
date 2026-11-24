@@ -209,6 +209,8 @@ fn session() -> Session {
         pending: HashSet::new(),
         failed: HashSet::new(),
         retry_after: HashMap::new(),
+        retry_attempts: HashMap::new(),
+        failure_log: retry::FailureLog::default(),
         elapsed: 0.0,
         resident: HashMap::new(),
         render_ready: None,
@@ -323,7 +325,7 @@ fn transient_failures_retry_after_delay_but_invalid_content_stays_failed() {
     let mut s = session();
     s.tx.send(Completion::Content(
         0,
-        Err(Error::Message("HTTP request failed")),
+        Err(Error::http(HttpError::Network)),
         0,
     ))
     .unwrap();
@@ -715,7 +717,7 @@ fn child_failure_preserves_parent_and_reports_error() {
     s.resident.insert(0, (10, 0));
     s.tx.send(Completion::Content(
         1,
-        Err(Error::Message("HTTP request failed")),
+        Err(Error::http(HttpError::Network)),
         0,
     ))
     .unwrap();

@@ -14,6 +14,7 @@ pub(crate) struct Loader(
     Arc<Option<crate::terrain::Imagery>>,
     Arc<Mutex<Option<crate::package::Package>>>,
     Arc<Mutex<()>>, // Provider authorization only; local reads never acquire it.
+    Arc<Mutex<crate::retry::Cooldowns>>,
 );
 impl Default for Loader {
     fn default() -> Self {
@@ -27,10 +28,39 @@ impl Default for Loader {
             Arc::default(),
             Arc::default(),
             Arc::default(),
+            Arc::default(),
         )
     }
 }
 impl Loader {
+    fn request(
+        &self,
+        url: &Url,
+        token: Option<&str>,
+        strict: bool,
+        source: HttpSource,
+    ) -> Result<Vec<u8>> {
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64()
+        };
+        self.6
+            .lock()
+            .map_err(|_| Error::Message("Retry state unavailable"))?
+            .check(source, now())?;
+        let result =
+            fetch_restricted(&self.0, url, token, strict).map_err(|e| e.with_source(source));
+        if let Err(error) = result {
+            self.6
+                .lock()
+                .map_err(|_| Error::Message("Retry state unavailable"))?
+                .observe(error, now());
+        }
+        result
+    }
+
     pub(crate) fn requires_provider(&self, url: &Url) -> bool {
         self.4.lock().ok().is_some_and(|state| {
             state.as_ref().is_some_and(|package| {
@@ -60,8 +90,7 @@ impl Loader {
         let Some(manifest_url) = manifest_url else {
             return Ok(url);
         };
-        let bytes = fetch_restricted(&self.0, &manifest_url, None, true)
-            .map_err(|e| e.with_source(HttpSource::Package))?;
+        let bytes = self.request(&manifest_url, None, true, HttpSource::Package)?;
         self.4
             .lock()
             .map_err(|_| Error::Message("Package unavailable"))?
@@ -99,9 +128,14 @@ impl Loader {
                     .ok_or(Error::Message("Offline terrain"))?,
             )?
         };
-        let grant = Grant::parse(&fetch_authorized(&self.0, &ion.endpoint, Some(&ion.token))?)?;
+        let grant = Grant::parse(&self.request(
+            &ion.endpoint,
+            Some(&ion.token),
+            false,
+            HttpSource::Provider,
+        )?)?;
         crate::package::canonical(&grant.url)?;
-        let bytes = fetch_restricted(&self.0, &grant.url, None, true)?;
+        let bytes = self.request(&grant.url, None, true, HttpSource::Provider)?;
         let credentials = crate::package::GoogleSession::from_root(&grant.url, &bytes)?;
         let authorized = credentials.authorize(url)?;
         self.4
@@ -125,6 +159,7 @@ impl Loader {
         Self(
             Self::default().0,
             Arc::new(Mutex::new(Some(ion))),
+            Arc::default(),
             Arc::default(),
             Arc::default(),
             Arc::default(),
@@ -176,13 +211,10 @@ impl Loader {
         if let Some(request) = request {
             let remote = match request {
                 crate::package::Request::Local(local) => {
-                    return fetch_restricted(&self.0, &local, None, true)
-                        .map_err(|e| e.with_source(HttpSource::Package));
+                    return self.request(&local, None, true, HttpSource::Package);
                 }
                 crate::package::Request::Cached { local, remote } => {
-                    match fetch_restricted(&self.0, &local, None, true)
-                        .map_err(|e| e.with_source(HttpSource::Package))
-                    {
+                    match self.request(&local, None, true, HttpSource::Package) {
                         Ok(bytes) => return Ok(bytes),
                         Err(e)
                             if e.status() == Some(404) || e == Error::Message("File not found") =>
@@ -197,8 +229,7 @@ impl Loader {
             let authorized = self
                 .provider_url(&remote, false)
                 .map_err(|e| e.with_source(HttpSource::Provider))?;
-            let result = fetch_restricted(&self.0, &authorized, None, true)
-                .map_err(|e| e.with_source(HttpSource::Provider));
+            let result = self.request(&authorized, None, true, HttpSource::Provider);
             if matches!(
                 result.as_ref().err().and_then(|e| e.status()),
                 Some(401 | 403)
@@ -206,8 +237,7 @@ impl Loader {
                 let refreshed = self
                     .provider_url(&remote, true)
                     .map_err(|e| e.with_source(HttpSource::Provider))?;
-                return fetch_restricted(&self.0, &refreshed, None, true)
-                    .map_err(|e| e.with_source(HttpSource::Provider));
+                return self.request(&refreshed, None, true, HttpSource::Provider);
             } else {
                 return result;
             }
@@ -224,7 +254,7 @@ impl Loader {
                 .filter(|g| g.authorizes(url))
                 .map(|g| g.token.clone())
         };
-        let result = fetch_authorized(&self.0, url, token.as_deref());
+        let result = self.request(url, token.as_deref(), false, HttpSource::Source);
         if result.as_ref().err().and_then(|e| e.status()) != Some(401) || token.is_none() {
             return result;
         }
@@ -261,7 +291,7 @@ impl Loader {
             }
             g.token.clone()
         };
-        fetch_authorized(&self.0, url, Some(&new_token))
+        self.request(url, Some(&new_token), false, HttpSource::Source)
     }
 
     pub(crate) fn load_root(&self, url: Option<Url>, sender: SyncSender<Completion>) {
@@ -425,6 +455,58 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::Instant;
+
+    #[test]
+    fn shared_provider_throttle_stops_other_tiles_but_allows_package_reads() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!("http://{}/tile", listener.local_addr().unwrap())).unwrap();
+        let server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                assert!(stream.read(&mut [0; 4096]).unwrap() > 0);
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            listener.set_nonblocking(true).unwrap();
+            assert!(listener.accept().is_err());
+        });
+        let loader = Loader::default();
+        assert_eq!(
+            loader
+                .request(&url, None, true, HttpSource::Provider)
+                .unwrap_err()
+                .status(),
+            Some(429)
+        );
+        // No network request may escape via another worker or another tile ID.
+        for id in 0..20 {
+            assert_eq!(
+                loader
+                    .clone()
+                    .request(
+                        &url.join(&format!("tile{id}")).unwrap(),
+                        None,
+                        true,
+                        HttpSource::Provider
+                    )
+                    .unwrap_err()
+                    .status(),
+                Some(429)
+            );
+        }
+        assert_eq!(
+            loader
+                .request(&url, None, true, HttpSource::Package)
+                .unwrap(),
+            b"ok"
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn http_failures_preserve_status_source_and_retry_after_without_secrets() {
