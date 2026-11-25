@@ -524,6 +524,119 @@ fn failed_sibling_keeps_parent_coverage() {
 }
 
 #[test]
+fn pan_into_missing_child_keeps_ready_ancestor_during_zoom_out() {
+    let mut s = session();
+    // Root covers the region; its coarse child is decoded but not GPU-ready.
+    // Only one of that child's finer tiles is available.
+    s.nodes[0].radius = 100.;
+    s.nodes[0].children = vec![1];
+    s.nodes.extend([node(), node(), node()]);
+    s.nodes[1].radius = 100.;
+    s.nodes[1].error = 0.;
+    s.nodes[1].children = vec![2, 3];
+    s.nodes[3].center.x = 14.;
+    s.resident
+        .extend([(0, (10, 0)), (1, (10, 0)), (2, (10, 0))]);
+    s.set_render_ready([0, 2]);
+    let straight = view();
+    let mut pan = straight;
+    pan.direction = [0.2, 0., -1.];
+    assert!(s.nodes[3].screen_error(&straight).is_none());
+    assert!(s.nodes[3].screen_error(&pan).is_some());
+    for _ in 0..20 {
+        assert_eq!(s.update(&[straight], 0.1).unwrap().visible, [2]);
+        let frame = s.update(&[pan], 0.1).unwrap();
+        assert_eq!(
+            frame.visible,
+            [0],
+            "partial detail must not replace complete coverage"
+        );
+        assert!(!frame.selection_complete);
+        assert!(frame.removed.is_empty());
+        assert_eq!(s.stats.resident_bytes, 30);
+    }
+    assert_eq!(s.stats.requests, 0);
+    s.set_render_ready([0, 1, 2]);
+    let frame = s.update(&[pan], 0.1).unwrap();
+    assert_eq!(frame.visible, [1]);
+    assert!(frame.selection_complete);
+    // Coverage protection must not pin tiles once all cameras leave the region.
+    s.cache_bytes = 0;
+    let frame = s.update(&[], 0.1).unwrap();
+    assert_eq!(frame.removed.len(), 3);
+    assert_eq!(s.stats.resident_bytes, 0);
+}
+
+#[test]
+fn partial_resident_detail_is_not_a_complete_selection_without_ancestor() {
+    let mut s = session();
+    s.nodes[0].children = vec![1, 2];
+    s.nodes.extend([node(), node()]);
+    s.nodes[0].error = 0.;
+    s.resident.extend([(0, (10, 0)), (1, (10, 0))]);
+    s.set_render_ready([1]);
+    let frame = s.update(&[view()], 0.1).unwrap();
+    assert_eq!(frame.visible, [1]);
+    assert!(!frame.selection_complete);
+    assert_eq!(s.stats.requests, 0);
+}
+
+#[test]
+fn resident_fallback_checks_nested_coverage_and_additive_content() {
+    for additive in [false, true] {
+        let mut s = session();
+        s.nodes[0].children = vec![1];
+        s.nodes.extend([node(), node(), node(), node(), node()]);
+        s.nodes[1].error = 0.;
+        s.nodes[1].children = vec![2];
+        s.nodes[2].url = None;
+        s.nodes[2].children = vec![3, 4];
+        s.resident
+            .extend([(0, (10, 0)), (1, (10, 0)), (3, (10, 0))]);
+        s.set_render_ready([0, 3, 5]);
+        if additive {
+            // Ready descendants cannot replace missing ADD content.
+            s.nodes[4].add = true;
+            s.nodes[4].children = vec![5];
+            s.resident.insert(5, (10, 0));
+        }
+        let frame = s.update(&[view()], 0.1).unwrap();
+        assert_eq!(frame.visible, [0]);
+        assert!(!frame.selection_complete);
+        assert_eq!(s.stats.requests, 0);
+        s.resident.insert(4, (10, 0));
+        s.set_render_ready([0, 3, 4, 5]);
+        let frame = s.update(&[view()], 0.1).unwrap();
+        assert_eq!(
+            frame.visible,
+            if additive { vec![3, 4, 5] } else { vec![3, 4] }
+        );
+        assert!(frame.selection_complete);
+    }
+}
+
+#[test]
+fn resident_fallback_covers_every_camera() {
+    let mut s = session();
+    s.nodes[0].radius = 100.;
+    s.nodes[0].children = vec![1];
+    s.nodes.extend([node(), node(), node()]);
+    s.nodes[1].radius = 100.;
+    s.nodes[1].error = 0.;
+    s.nodes[1].children = vec![2, 3];
+    s.nodes[3].center.x = 14.;
+    s.resident
+        .extend([(0, (10, 0)), (1, (10, 0)), (2, (10, 0))]);
+    s.set_render_ready([0, 2]);
+    let mut sensor = view();
+    sensor.direction = [0.2, 0., -1.];
+    let frame = s.update(&[view(), sensor], 0.1).unwrap();
+    assert_eq!(frame.visible, [0]);
+    assert!(!frame.selection_complete);
+    assert_eq!(s.stats.requests, 0);
+}
+
+#[test]
 fn pan_away_and_back_reuses_resident_content_within_budget() {
     let mut s = session();
     s.resident.insert(0, (100, 0));
