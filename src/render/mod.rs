@@ -1261,9 +1261,7 @@ mod tests {
             ..default()
         };
         app.update();
-        app.world_mut()
-            .resource_mut::<CesiumStatus>()
-            .stable_frames = 0;
+        app.world_mut().resource_mut::<CesiumStatus>().stable_frames = 0;
         for i in 0..8 {
             app.world_mut()
                 .non_send_mut::<NativeSession<ControlledBackend>>()
