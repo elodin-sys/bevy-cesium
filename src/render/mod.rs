@@ -12,7 +12,7 @@ use bevy::{
     transform::helper::TransformHelper,
 };
 mod readiness;
-use readiness::{ReadyTiles, TileAssets};
+use readiness::{GpuPrepareSnapshot, GpuPrepareStatus, ReadyTiles, TileAssets};
 mod contract;
 pub use contract::*;
 use std::collections::{HashMap, HashSet};
@@ -126,6 +126,22 @@ struct NativeSession<B: Backend> {
     published: HashSet<u64>,
     removed: HashSet<u64>,
     waiting_for_initial_load: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct GpuStallKey {
+    pending: usize,
+    selected: usize,
+    replacements: usize,
+    replacement_entities: usize,
+    gpu: GpuPrepareSnapshot,
+}
+
+#[derive(Default)]
+struct GpuStallTracker {
+    key: Option<GpuStallKey>,
+    unchanged_since: Option<Instant>,
+    last_log: Option<Instant>,
 }
 
 pub struct TilesPlugin<B: Backend> {
@@ -453,6 +469,7 @@ fn stream<B: Backend>(
             } else {
                 None
             };
+            let image = texture.as_ref().map(|handle| handle.id());
             let material = StandardMaterial {
                 base_color: Color::linear_rgba(
                     p.base_color[0],
@@ -486,6 +503,7 @@ fn stream<B: Backend>(
                     TileAssets {
                         mesh: mesh.id(),
                         material: material.id(),
+                        image,
                     },
                     Mesh3d(mesh),
                     MeshMaterial3d(material),
@@ -514,8 +532,10 @@ fn publish<B: Backend>(
     mut commands: Commands,
     native: Option<NonSendMut<NativeSession<B>>>,
     ready: Option<Res<ReadyTiles>>,
+    gpu_status: Option<Res<GpuPrepareStatus>>,
     mut visibility: Query<&mut Visibility>,
     mut status: ResMut<CesiumStatus>,
+    mut stall: Local<GpuStallTracker>,
 ) {
     let Some(mut native) = native else {
         return;
@@ -551,6 +571,42 @@ fn publish<B: Backend>(
         .iter()
         .filter(|id| !native.tiles.contains_key(id) || native.replacements.contains_key(id))
         .count();
+    let replacement_entities = native.replacements.values().map(Vec::len).sum::<usize>();
+    let key = gpu_status.as_ref().map(|gpu_status| GpuStallKey {
+        pending: status.pending_render_tiles,
+        selected: native.selected.len(),
+        replacements: native.replacements.len(),
+        replacement_entities,
+        gpu: *gpu_status.0.lock().expect("tile readiness lock poisoned"),
+    });
+    if status.pending_render_tiles > 0 && key == stall.key {
+        let now = Instant::now();
+        let since = *stall.unchanged_since.get_or_insert(now);
+        if now.duration_since(since).as_secs() >= 5
+            && stall
+                .last_log
+                .is_none_or(|last| now.duration_since(last).as_secs() >= 10)
+            && let Some(key) = key
+        {
+            stall.last_log = Some(now);
+            warn!(
+                selected = key.selected,
+                replacements = key.replacements,
+                replacement_entities = key.replacement_entities,
+                candidates = key.gpu.candidates,
+                gpu_meshes = key.gpu.meshes,
+                gpu_images = key.gpu.images,
+                gpu_materials = key.gpu.materials,
+                "Cesium tile GPU preparation stalled"
+            );
+        }
+    } else {
+        *stall = GpuStallTracker {
+            key,
+            unchanged_since: key.map(|_| Instant::now()),
+            last_log: None,
+        };
+    }
     let coverage_ready = native
         .selected
         .iter()
