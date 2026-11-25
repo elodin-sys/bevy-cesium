@@ -93,11 +93,11 @@ pub struct CesiumStatus {
 }
 
 impl CesiumStatus {
-    /// A warm-up gate for a fixed reference path, not a pixel-parity guarantee.
-    /// Hosts must also warm their camera pipelines and enforce a load timeout.
+    /// A warm-up gate for stable published coverage, not a pixel-parity guarantee.
+    /// Refinement can continue after capture starts.
     pub fn ready_for_capture(&self) -> bool {
         !self.load_failed
-            && self.selection_complete
+            && self.pending == 0
             && self.visible_tiles > 0
             && self.pending_render_tiles == 0
             && self.stable_frames >= 8
@@ -600,8 +600,8 @@ fn publish<B: Backend>(
     }
     status.resident_tiles = native.tiles.len();
     status.visible_tiles = native.published.len();
-    if status.selection_complete
-        && !status.load_failed
+    if !status.load_failed
+        && status.pending == 0
         && status.pending_render_tiles == 0
         && status.visible_tiles > 0
     {
@@ -1245,6 +1245,40 @@ mod tests {
         step(&mut app, vec![packet(1)], vec![1], vec![]);
         assert!(!app.world().resource::<CesiumStatus>().ready_for_capture());
         assert_eq!(app.world().resource::<CesiumStatus>().stable_frames, 0);
+    }
+
+    #[test]
+    fn capture_accepts_stable_published_fallback_while_refinement_continues() {
+        let mut app = controlled_app_with_startup_wait(true);
+        step(&mut app, vec![packet(1)], vec![1], vec![]);
+        acknowledge(&mut app, 1);
+        app.world_mut()
+            .non_send_mut::<NativeSession<ControlledBackend>>()
+            .session
+            .next = Frame {
+            visible: vec![1],
+            selection_complete: true,
+            ..default()
+        };
+        app.update();
+        app.world_mut()
+            .resource_mut::<CesiumStatus>()
+            .stable_frames = 0;
+        for i in 0..8 {
+            app.world_mut()
+                .non_send_mut::<NativeSession<ControlledBackend>>()
+                .session
+                .next = Frame {
+                visible: vec![1],
+                selection_complete: false,
+                ..default()
+            };
+            app.update();
+            assert_eq!(
+                app.world().resource::<CesiumStatus>().ready_for_capture(),
+                i == 7
+            );
+        }
     }
 
     struct NeverOpen;
