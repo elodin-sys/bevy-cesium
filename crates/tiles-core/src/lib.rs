@@ -534,10 +534,12 @@ impl Session {
             // is render-ready. Do not request extra detail just for this fallback.
             if !n.add {
                 let before = visible.len();
+                let mut all_ready = !n.children.is_empty();
                 for child in &n.children {
-                    self.select_resident(*child, views, visible, required, prepared_only);
+                    all_ready &=
+                        self.select_resident(*child, views, visible, required, prepared_only);
                 }
-                if loaded && visible.len() > before {
+                if loaded && all_ready && visible.len() > before {
                     return true;
                 }
             }
@@ -553,7 +555,7 @@ impl Session {
         visible: &mut Vec<u64>,
         required: &mut HashSet<usize>,
         prepared_only: bool,
-    ) {
+    ) -> bool {
         let node = &self.nodes[id];
         if !views.iter().any(|v| node.screen_error(v).is_some())
             || (prepared_only
@@ -562,8 +564,9 @@ impl Session {
                     .as_ref()
                     .is_some_and(|url| self.client.requires_provider(url)))
         {
-            return;
+            return true;
         }
+        let mut ready = false;
         if self.resident.contains_key(&id) {
             required.insert(id);
             if self
@@ -571,15 +574,20 @@ impl Session {
                 .as_ref()
                 .is_none_or(|set| set.contains(&(id as u64)))
             {
+                ready = true;
                 visible.push(id as u64);
                 if !node.add {
-                    return;
+                    return true;
                 }
             }
         }
+        // A partial set of resident descendants is useful while loading, but
+        // must not make an ancestor drop its complete fallback coverage.
+        let mut all_ready = true;
         for child in &node.children {
-            self.select_resident(*child, views, visible, required, prepared_only);
+            all_ready &= self.select_resident(*child, views, visible, required, prepared_only);
         }
+        all_ready && (node.url.is_none() || ready || (!node.add && !node.children.is_empty()))
     }
 }
 
