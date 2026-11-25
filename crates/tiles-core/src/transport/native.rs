@@ -784,6 +784,9 @@ mod tests {
                     assert!(Instant::now() < deadline, "missing expected request {step}");
                     std::thread::sleep(Duration::from_millis(5));
                 };
+                // Accepted sockets can inherit the listener's nonblocking mode
+                // on macOS. Wait for headers instead of racing the client write.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
