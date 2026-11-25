@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "bevy-cesium"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "bevy",
  "cxx",
@@ -4571,7 +4571,7 @@ dependencies = [
 
 [[package]]
 name = "tiles-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "draco-core",
