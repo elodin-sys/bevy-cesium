@@ -121,12 +121,18 @@ enum Payload {
     Mesh(Tile, Vec<String>),
     Hierarchy(Vec<Node>),
 }
+/// Tile jobs in flight. Browser jobs mostly wait on the network; native jobs
+/// each own a decoding thread.
+const MAX_PENDING_TILE_JOBS: usize = if cfg!(target_arch = "wasm32") { 16 } else { 4 };
+/// The remaining jobs stay free for prepared reads while the provider is slow.
+const MAX_PROVIDER_TILE_JOBS: usize = MAX_PENDING_TILE_JOBS * 3 / 4;
+
 /// The cache budget covers unused tiles, excluding the current visible and
-/// refining working set. Work in flight is capped at four tiles; each response
-/// is limited to 32 MiB. This is not a hard cap on total CPU/GPU memory.
+/// refining working set. Work in flight is capped at [`MAX_PENDING_TILE_JOBS`];
+/// each response is limited to 32 MiB. This is not a hard cap on total CPU/GPU memory.
 pub struct Session {
     nodes: Vec<Node>,
-    tx: mpsc::SyncSender<Completion>,
+    tx: mpsc::Sender<Completion>,
     rx: mpsc::Receiver<Completion>,
     pending: HashSet<usize>,
     failed: HashSet<usize>,
@@ -179,7 +185,7 @@ impl Session {
         Self::start(transport::Loader::default(), Some(url))
     }
     fn start(client: transport::Loader, url: Option<Url>) -> Result<Self> {
-        let (tx, rx) = mpsc::sync_channel(4);
+        let (tx, rx) = mpsc::channel();
         client.load_root(url, tx.clone());
         Ok(Self {
             nodes: vec![],
@@ -362,7 +368,7 @@ impl Session {
             })
             .count();
         for id in wanted {
-            if self.pending.len() >= 4 {
+            if self.pending.len() >= MAX_PENDING_TILE_JOBS {
                 break;
             }
             if self.resident.contains_key(&id)
@@ -375,7 +381,7 @@ impl Session {
                 continue;
             };
             if self.client.requires_provider(&url) {
-                if provider_pending >= 3 {
+                if provider_pending >= MAX_PROVIDER_TILE_JOBS {
                     continue;
                 }
                 provider_pending += 1;

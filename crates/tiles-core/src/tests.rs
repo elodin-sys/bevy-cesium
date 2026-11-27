@@ -201,7 +201,7 @@ fn node() -> Node {
     }
 }
 fn session() -> Session {
-    let (tx, rx) = mpsc::sync_channel(4);
+    let (tx, rx) = mpsc::channel();
     Session {
         nodes: vec![node()],
         tx,

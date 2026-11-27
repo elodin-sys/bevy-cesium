@@ -125,14 +125,23 @@ enabled; `ready_for_capture()` still waits for a complete, error-free selection.
 Missing provider siblings do not force prepared detail back to a coarse ancestor.
 Areas outside the package still depend on provider availability.
 
+In the browser, a host page can deliver package files itself, for example in
+batches or from its own cache. Set `globalThis.elodinFetchPackage` to a function
+that takes the `Request` the loader would send and returns a `Response` or a
+promise of one. The loader looks it up for every package read and never for
+provider requests, then applies its usual status, size and timeout checks. A 404
+means the file is not in the package. A rejection or a thrown error is retried
+like a network error. The host is responsible for the bytes it returns.
+
 Browser terrain requires EPSG:4326/TMS, a maximum level of 24 and static
 availability above level 6. Dynamic metadata availability and parent layers are
 unsupported. Imagery must match the terrain's geographic grid; it is not
 reprojected. Unsupported sources and nonzero retention margins return errors.
 
-The browser loader implements a subset of Cesium Native. It permits four tile
-jobs concurrently and responses up to 32 MiB; decoding runs on the browser
-thread. The unused-tile cache budget does not cap active tiles or GPU memory.
+The browser loader implements a subset of Cesium Native. It permits sixteen tile
+jobs concurrently, at most twelve of them from the provider (four and three for
+native prepared sources), and responses up to 32 MiB; decoding runs on the
+browser thread. The unused-tile cache budget does not cap active tiles or GPU memory.
 Its source and licenses come from the [terrain demo](crates/tiles-core/README.md).
 
 The Rust loader requests coarse coverage before finer levels, with nearer bounds

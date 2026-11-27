@@ -4,7 +4,7 @@ use crate::{HttpError, HttpSource};
 use glam::DMat4;
 use js_sys::{Reflect, Uint8Array};
 use std::{cell::RefCell, rc::Rc};
-use std::{collections::HashMap, sync::mpsc::SyncSender};
+use std::{collections::HashMap, sync::mpsc::Sender};
 use url::Url;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
@@ -19,7 +19,19 @@ pub(crate) struct Loader(
     Rc<Option<crate::terrain::Imagery>>,
     Rc<RefCell<Option<crate::package::Package>>>,
     Rc<RefCell<crate::retry::Cooldowns>>,
+    Rc<RefCell<Option<(js_sys::Promise, js_sys::Function)>>>,
 );
+
+/// Held while one job signs in to the provider. Dropping it wakes the waiters.
+struct ProviderGate(Rc<RefCell<Option<(js_sys::Promise, js_sys::Function)>>>);
+
+impl Drop for ProviderGate {
+    fn drop(&mut self) {
+        if let Some((_, release)) = self.0.borrow_mut().take() {
+            let _ = release.call0(&JsValue::UNDEFINED);
+        }
+    }
+}
 
 impl Loader {
     async fn request(
@@ -30,7 +42,7 @@ impl Loader {
         source: HttpSource,
     ) -> Result<Vec<u8>> {
         self.4.borrow().check(source, js_sys::Date::now() / 1000.)?;
-        let result = fetch_restricted(url, token, strict)
+        let result = fetch_restricted(url, token, strict, source == HttpSource::Package)
             .await
             .map_err(|e| e.with_source(source));
         if let Err(error) = result {
@@ -77,6 +89,23 @@ impl Loader {
             .install(&bytes)
     }
     async fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
+        // Share one grant between provider misses, like the native loader's
+        // lock: a job that waited reuses the session the first one stored.
+        loop {
+            let held = self.5.borrow().as_ref().map(|(held, _)| held.clone());
+            let Some(held) = held else { break };
+            let _ = JsFuture::from(held).await;
+        }
+        let mut release = None;
+        let held = js_sys::Promise::new(&mut |resolve, _| release = Some(resolve));
+        if let Some(release) = release {
+            *self.5.borrow_mut() = Some((held, release));
+        }
+        let _gate = ProviderGate(self.5.clone());
+        self.sign_in(url, refresh).await
+    }
+
+    async fn sign_in(&self, url: &Url, refresh: bool) -> Result<Url> {
         let ion = {
             let state = self.3.borrow();
             let package = state
@@ -122,13 +151,10 @@ impl Loader {
         self
     }
     pub(crate) fn ion(ion: Ion) -> Self {
-        Self(
-            Rc::new(RefCell::new(Some(ion))),
-            Rc::default(),
-            Rc::default(),
-            Rc::default(),
-            Rc::default(),
-        )
+        Self {
+            0: Rc::new(RefCell::new(Some(ion))),
+            ..Self::default()
+        }
     }
     pub(crate) fn credits(&self) -> Vec<String> {
         let mut credits = self
@@ -239,7 +265,7 @@ impl Loader {
             .await
     }
 
-    pub(crate) fn load_root(&self, url: Option<Url>, sender: SyncSender<Completion>) {
+    pub(crate) fn load_root(&self, url: Option<Url>, sender: Sender<Completion>) {
         let loader = self.clone();
         spawn_local(async move {
             let result = async {
@@ -258,7 +284,7 @@ impl Loader {
                 })
             }
             .await;
-            let _ = sender.try_send(Completion::Root(result));
+            let _ = sender.send(Completion::Root(result));
         });
     }
 
@@ -271,7 +297,7 @@ impl Loader {
         add: bool,
         depth: usize,
         terrain: Option<crate::terrain::TileAddress>,
-        sender: SyncSender<Completion>,
+        sender: Sender<Completion>,
     ) {
         let loader = self.clone();
         spawn_local(async move {
@@ -315,9 +341,7 @@ impl Loader {
                 }
                 Err(error) => Err(error),
             };
-            // Session permits at most four outstanding tile jobs; the channel
-            // has four slots. No blocking synchronization on the browser thread.
-            let _ = sender.try_send(Completion::Content(id, result, size));
+            let _ = sender.send(Completion::Content(id, result, size));
         });
     }
 }
@@ -360,9 +384,24 @@ impl Drop for FetchGuard {
 }
 
 async fn fetch_authorized(url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
-    fetch_restricted(url, token, false).await
+    fetch_restricted(url, token, false, false).await
 }
-async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Result<Vec<u8>> {
+
+/// A host page may deliver prepared package files itself, for example in
+/// batches or from its own cache. Provider requests never reach it.
+fn package_hook() -> Option<js_sys::Function> {
+    Reflect::get(&js_sys::global(), &JsValue::from_str("elodinFetchPackage"))
+        .ok()?
+        .dyn_into()
+        .ok()
+}
+
+async fn fetch_restricted(
+    url: &Url,
+    token: Option<&str>,
+    strict: bool,
+    package: bool,
+) -> Result<Vec<u8>> {
     const MAX: usize = 32 * 1024 * 1024;
     if !matches!(url.scheme(), "https" | "http") {
         return Err(Error::Message("Browser sources must use HTTP or HTTPS"));
@@ -396,7 +435,15 @@ async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Resul
             .map_err(|_| Error::Message("Invalid access token"))?;
     }
     let window = web_sys::window().ok_or(Error::Message("Browser window unavailable"))?;
-    let response: Response = JsFuture::from(window.fetch_with_request(&request))
+    let fetched = match package.then(package_hook).flatten() {
+        // A hook that throws fails like a network error, so the tile is retried.
+        Some(hook) => hook
+            .call1(&js_sys::global(), &request)
+            .map(|response| js_sys::Promise::resolve(&response))
+            .unwrap_or_else(|error| js_sys::Promise::reject(&error)),
+        None => window.fetch_with_request(&request),
+    };
+    let response: Response = JsFuture::from(fetched)
         .await
         .map_err(|_| {
             Error::http(if guard.controller.signal().aborted() {
