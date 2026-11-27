@@ -3,7 +3,7 @@ use crate::{Completion, Error, Payload, Result, Tile, content, parse_root};
 use crate::{HttpError, HttpSource};
 use glam::DMat4;
 use std::sync::{Arc, Mutex};
-use std::{sync::mpsc::SyncSender, time::Duration};
+use std::{sync::mpsc::Sender, time::Duration};
 use url::Url;
 
 #[derive(Clone)]
@@ -294,7 +294,7 @@ impl Loader {
         self.request(url, Some(&new_token), false, HttpSource::Source)
     }
 
-    pub(crate) fn load_root(&self, url: Option<Url>, sender: SyncSender<Completion>) {
+    pub(crate) fn load_root(&self, url: Option<Url>, sender: Sender<Completion>) {
         let loader = self.clone();
         std::thread::spawn(move || {
             let result = loader
@@ -326,7 +326,7 @@ impl Loader {
         add: bool,
         depth: usize,
         terrain: Option<crate::terrain::TileAddress>,
-        sender: SyncSender<Completion>,
+        sender: Sender<Completion>,
     ) {
         let loader = self.clone();
         std::thread::spawn(move || {

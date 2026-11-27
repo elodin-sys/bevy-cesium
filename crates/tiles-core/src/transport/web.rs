@@ -4,7 +4,7 @@ use crate::{HttpError, HttpSource};
 use glam::DMat4;
 use js_sys::{Reflect, Uint8Array};
 use std::{cell::RefCell, rc::Rc};
-use std::{collections::HashMap, sync::mpsc::SyncSender};
+use std::{collections::HashMap, sync::mpsc::Sender};
 use url::Url;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
@@ -239,7 +239,7 @@ impl Loader {
             .await
     }
 
-    pub(crate) fn load_root(&self, url: Option<Url>, sender: SyncSender<Completion>) {
+    pub(crate) fn load_root(&self, url: Option<Url>, sender: Sender<Completion>) {
         let loader = self.clone();
         spawn_local(async move {
             let result = async {
@@ -258,7 +258,7 @@ impl Loader {
                 })
             }
             .await;
-            let _ = sender.try_send(Completion::Root(result));
+            let _ = sender.send(Completion::Root(result));
         });
     }
 
@@ -271,7 +271,7 @@ impl Loader {
         add: bool,
         depth: usize,
         terrain: Option<crate::terrain::TileAddress>,
-        sender: SyncSender<Completion>,
+        sender: Sender<Completion>,
     ) {
         let loader = self.clone();
         spawn_local(async move {
@@ -315,9 +315,7 @@ impl Loader {
                 }
                 Err(error) => Err(error),
             };
-            // Session permits at most four outstanding tile jobs; the channel
-            // has four slots. No blocking synchronization on the browser thread.
-            let _ = sender.try_send(Completion::Content(id, result, size));
+            let _ = sender.send(Completion::Content(id, result, size));
         });
     }
 }

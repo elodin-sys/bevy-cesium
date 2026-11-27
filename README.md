@@ -130,9 +130,10 @@ availability above level 6. Dynamic metadata availability and parent layers are
 unsupported. Imagery must match the terrain's geographic grid; it is not
 reprojected. Unsupported sources and nonzero retention margins return errors.
 
-The browser loader implements a subset of Cesium Native. It permits four tile
-jobs concurrently and responses up to 32 MiB; decoding runs on the browser
-thread. The unused-tile cache budget does not cap active tiles or GPU memory.
+The browser loader implements a subset of Cesium Native. It permits sixteen tile
+jobs concurrently, at most twelve of them from the provider (four and three for
+native prepared sources), and responses up to 32 MiB; decoding runs on the
+browser thread. The unused-tile cache budget does not cap active tiles or GPU memory.
 Its source and licenses come from the [terrain demo](crates/tiles-core/README.md).
 
 The Rust loader requests coarse coverage before finer levels, with nearer bounds
