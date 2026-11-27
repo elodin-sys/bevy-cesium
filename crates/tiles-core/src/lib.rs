@@ -128,8 +128,9 @@ const MAX_PENDING_TILE_JOBS: usize = if cfg!(target_arch = "wasm32") { 16 } else
 const MAX_PROVIDER_TILE_JOBS: usize = MAX_PENDING_TILE_JOBS * 3 / 4;
 
 /// The cache budget covers unused tiles, excluding the current visible and
-/// refining working set. Work in flight is capped at [`MAX_PENDING_TILE_JOBS`];
-/// each response is limited to 32 MiB. This is not a hard cap on total CPU/GPU memory.
+/// refining working set. Work in flight is capped at sixteen tile jobs in the
+/// browser and four on native; each response is limited to 32 MiB. This is not
+/// a hard cap on total CPU/GPU memory.
 pub struct Session {
     nodes: Vec<Node>,
     tx: mpsc::Sender<Completion>,
