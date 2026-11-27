@@ -42,7 +42,7 @@ impl Loader {
         source: HttpSource,
     ) -> Result<Vec<u8>> {
         self.4.borrow().check(source, js_sys::Date::now() / 1000.)?;
-        let result = fetch_restricted(url, token, strict)
+        let result = fetch_restricted(url, token, strict, source == HttpSource::Package)
             .await
             .map_err(|e| e.with_source(source));
         if let Err(error) = result {
@@ -384,9 +384,24 @@ impl Drop for FetchGuard {
 }
 
 async fn fetch_authorized(url: &Url, token: Option<&str>) -> Result<Vec<u8>> {
-    fetch_restricted(url, token, false).await
+    fetch_restricted(url, token, false, false).await
 }
-async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Result<Vec<u8>> {
+
+/// A host page may deliver prepared package files itself, for example in
+/// batches or from its own cache. Provider requests never reach it.
+fn package_hook() -> Option<js_sys::Function> {
+    Reflect::get(&js_sys::global(), &JsValue::from_str("elodinFetchPackage"))
+        .ok()?
+        .dyn_into()
+        .ok()
+}
+
+async fn fetch_restricted(
+    url: &Url,
+    token: Option<&str>,
+    strict: bool,
+    package: bool,
+) -> Result<Vec<u8>> {
     const MAX: usize = 32 * 1024 * 1024;
     if !matches!(url.scheme(), "https" | "http") {
         return Err(Error::Message("Browser sources must use HTTP or HTTPS"));
@@ -420,7 +435,15 @@ async fn fetch_restricted(url: &Url, token: Option<&str>, strict: bool) -> Resul
             .map_err(|_| Error::Message("Invalid access token"))?;
     }
     let window = web_sys::window().ok_or(Error::Message("Browser window unavailable"))?;
-    let response: Response = JsFuture::from(window.fetch_with_request(&request))
+    let fetched = match package.then(package_hook).flatten() {
+        // A hook that throws fails like a network error, so the tile is retried.
+        Some(hook) => hook
+            .call1(&js_sys::global(), &request)
+            .map(|response| js_sys::Promise::resolve(&response))
+            .unwrap_or_else(|error| js_sys::Promise::reject(&error)),
+        None => window.fetch_with_request(&request),
+    };
+    let response: Response = JsFuture::from(fetched)
         .await
         .map_err(|_| {
             Error::http(if guard.controller.signal().aborted() {
