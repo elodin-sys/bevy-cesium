@@ -19,7 +19,19 @@ pub(crate) struct Loader(
     Rc<Option<crate::terrain::Imagery>>,
     Rc<RefCell<Option<crate::package::Package>>>,
     Rc<RefCell<crate::retry::Cooldowns>>,
+    Rc<RefCell<Option<(js_sys::Promise, js_sys::Function)>>>,
 );
+
+/// Held while one job signs in to the provider. Dropping it wakes the waiters.
+struct ProviderGate(Rc<RefCell<Option<(js_sys::Promise, js_sys::Function)>>>);
+
+impl Drop for ProviderGate {
+    fn drop(&mut self) {
+        if let Some((_, release)) = self.0.borrow_mut().take() {
+            let _ = release.call0(&JsValue::UNDEFINED);
+        }
+    }
+}
 
 impl Loader {
     async fn request(
@@ -77,6 +89,23 @@ impl Loader {
             .install(&bytes)
     }
     async fn provider_url(&self, url: &Url, refresh: bool) -> Result<Url> {
+        // Share one grant between provider misses, like the native loader's
+        // lock: a job that waited reuses the session the first one stored.
+        loop {
+            let held = self.5.borrow().as_ref().map(|(held, _)| held.clone());
+            let Some(held) = held else { break };
+            let _ = JsFuture::from(held).await;
+        }
+        let mut release = None;
+        let held = js_sys::Promise::new(&mut |resolve, _| release = Some(resolve));
+        if let Some(release) = release {
+            *self.5.borrow_mut() = Some((held, release));
+        }
+        let _gate = ProviderGate(self.5.clone());
+        self.sign_in(url, refresh).await
+    }
+
+    async fn sign_in(&self, url: &Url, refresh: bool) -> Result<Url> {
         let ion = {
             let state = self.3.borrow();
             let package = state
@@ -122,13 +151,10 @@ impl Loader {
         self
     }
     pub(crate) fn ion(ion: Ion) -> Self {
-        Self(
-            Rc::new(RefCell::new(Some(ion))),
-            Rc::default(),
-            Rc::default(),
-            Rc::default(),
-            Rc::default(),
-        )
+        Self {
+            0: Rc::new(RefCell::new(Some(ion))),
+            ..Self::default()
+        }
     }
     pub(crate) fn credits(&self) -> Vec<String> {
         let mut credits = self
